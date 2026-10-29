@@ -107,15 +107,95 @@ table 11007166 "ADLSE Run"
         exit(Round(Ended - Started, 100));
     end;
 
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'i')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
     procedure RegisterStarted(TableID: Integer)
     begin
+        // Reuse the run registered when the export was queued or started, so that each export has a single run.
+        if FindLastRun(TableID) then
+            if Rec.State = "ADLSE Run State"::InProcess then begin
+                Rec.Started := CurrentDateTime();
+                Rec.Ended := 0DT;
+                Rec.Error := '';
+                Rec.Modify(true);
+                exit;
+            end;
+
+        Rec.Reset();
         Rec.Init();
         Rec."Table ID" := TableID;
         Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
         Rec.State := "ADLSE Run State"::InProcess;
         Rec.Started := CurrentDateTime();
         Rec.Insert(true);
+    end;
+
+    /// <summary>
+    /// Registers an export run as in process for a table whose export session is about to be started
+    /// or has been queued, unless the last run of the table is already in process.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'ri')]
+    procedure RegisterQueued(TableID: Integer)
+    begin
+        if FindLastRun(TableID) then
+            if Rec.State = "ADLSE Run State"::InProcess then
+                exit;
+
+        Rec.Reset();
+        Rec.Init();
+        Rec."Table ID" := TableID;
+        Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
+        Rec.State := "ADLSE Run State"::InProcess;
+        Rec.Started := CurrentDateTime();
+        Rec.Insert(true);
+    end;
+
+    /// <summary>
+    /// Marks the in-process run of a table as failed. When the last run is not in process, a failed run
+    /// is inserted only if InsertIfNotInProcess is set, so the next export is forced for the table.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
+    procedure RegisterFailed(TableID: Integer; ErrorText: Text; InsertIfNotInProcess: Boolean) Registered: Boolean
+    var
+        ADLSEExternalEvents: Codeunit "ADLSE External Events";
+        InProcess: Boolean;
+    begin
+        if FindLastRun(TableID) then
+            InProcess := Rec.State = "ADLSE Run State"::InProcess;
+
+        if not InProcess then begin
+            if not InsertIfNotInProcess then
+                exit(false);
+            Rec.Reset();
+            Rec.Init();
+            Rec."Table ID" := TableID;
+            Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
+            Rec.Started := CurrentDateTime();
+            Rec.Insert(true);
+        end;
+
+        Rec.State := "ADLSE Run State"::Failed;
+        Rec.Error := CopyStr(ErrorText, 1, MaxStrLen(Rec.Error));
+        Rec.Ended := CurrentDateTime();
+        Rec.Modify(true);
+        ADLSEExternalEvents.OnTableExportRunEnded(Rec.ID, Rec.Started, Rec.Ended, Rec."Table ID", Rec.State);
+        exit(true);
+    end;
+
+    /// <summary>
+    /// Fails all in-process runs of the current company. To be used only when no export session is
+    /// active for the company, so these runs can never be completed anymore.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rm')]
+    procedure CancelOrphanedRuns(Reason: Text)
+    begin
+        Rec.Reset();
+        Rec.SetRange("Company Name", CompanyName());
+        Rec.SetRange(State, "ADLSE Run State"::InProcess);
+        if Rec.IsEmpty() then
+            exit;
+        Rec.ModifyAll(Ended, CurrentDateTime(), true);
+        Rec.ModifyAll(Error, CopyStr(Reason, 1, MaxStrLen(Rec.Error)), true);
+        Rec.ModifyAll(State, "ADLSE Run State"::Failed, true);
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'm')]

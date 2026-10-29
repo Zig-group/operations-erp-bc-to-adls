@@ -333,6 +333,31 @@
           <note from="Developer" annotates="general" priority="2"></note>
           <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Field - Field Table ID - Property Caption</note>
         </trans-unit>
+        <trans-unit id="Table 325709914 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>ADLSE Pending Table</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Pending Table - Property Caption</note>
+        </trans-unit>
+        <trans-unit id="Table 325709914 - Field 3997336476 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Company name</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Pending Table - Field Company Name - Property Caption</note>
+        </trans-unit>
+        <trans-unit id="Table 325709914 - Field 2846504292 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Queued at</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Pending Table - Field Queued At - Property Caption</note>
+        </trans-unit>
+        <trans-unit id="Table 325709914 - Field 3848668602 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Start attempts</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Pending Table - Field Start Attempts - Property Caption</note>
+        </trans-unit>
+        <trans-unit id="Table 325709914 - Field 3135334477 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Table ID</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Pending Table - Field Table ID - Property Caption</note>
+        </trans-unit>
         <trans-unit id="Table 938701546 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
           <source>ADLSE Run</source>
           <note from="Developer" annotates="general" priority="2"></note>
@@ -798,6 +823,16 @@
           <note from="Developer" annotates="general" priority="2"></note>
           <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Table - Field ExportFileNumber - Property Caption</note>
         </trans-unit>
+        <trans-unit id="Table 3041034051 - Field 3132119869 - Property 1295455071" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Specifies an end date to limit each export run to a manageable batch of historical records, e.g. one month or year at a time, so a large initial load can run in deltas instead of one long run. Only records with SystemModifiedAt &lt;= this date are exported while set. The field is cleared automatically once all records up to this date have been exported; set it again to process the next batch. Leave blank for normal, unbounded export.</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Table - Field Initial Load End Date - Property ToolTip</note>
+        </trans-unit>
+        <trans-unit id="Table 3041034051 - Field 3132119869 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Initial Load End Date</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Table ADLSE Table - Field Initial Load End Date - Property Caption</note>
+        </trans-unit>
         <trans-unit id="Table 3041034051 - Field 3887527536 - Property 1295455071" size-unit="char" translate="yes" xml:space="preserve">
           <source>Specifies the starting date for the initial data load. Only records with SystemModifiedAt &gt;= this date will be exported on the first export. Leave blank to export all historical data.</source>
           <note from="Developer" annotates="general" priority="2"></note>
@@ -1008,10 +1043,25 @@
           <note from="Developer" annotates="general" priority="2"></note>
           <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType ClearSchemaExportedOnMsg</note>
         </trans-unit>
+        <trans-unit id="Codeunit 1271087839 - NamedType 3462921543" size-unit="char" translate="yes" xml:space="preserve">
+          <source>The export could not be started for this table. It is exported again with the next export. Error: %1</source>
+          <note from="Developer" annotates="general" priority="2">%1 = error text</note>
+          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType CouldNotStartExportErr</note>
+        </trans-unit>
+        <trans-unit id="Codeunit 1271087839 - NamedType 2024429612" size-unit="char" translate="yes" xml:space="preserve">
+          <source>An export is already running for this company. Please wait for it to finish before starting a new export.</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType ExportAlreadyRunningErr</note>
+        </trans-unit>
         <trans-unit id="Codeunit 1271087839 - NamedType 1611599047" size-unit="char" translate="yes" xml:space="preserve">
           <source>Data export started for %1 out of %2 tables. Please refresh this page to see the latest export state for the tables. Only those tables that either have had changes since the last export or failed to export last time have been included. The tables for which the exports could not be started have been queued up for later.</source>
           <note from="Developer" annotates="general" priority="2">%1 = number of tables to start the export for. %2 = total number of tables enabled for export.</note>
           <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType ExportStartedTxt</note>
+        </trans-unit>
+        <trans-unit id="Codeunit 1271087839 - NamedType 1425048953" size-unit="char" translate="yes" xml:space="preserve">
+          <source>The previous export of this table did not finish, so the table is exported again.</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType PreviousExportNotFinishedErr</note>
         </trans-unit>
         <trans-unit id="Codeunit 1271087839 - NamedType 2174952215" size-unit="char" translate="yes" xml:space="preserve">
           <source>The export process was stopped successfully.</source>
@@ -1117,6 +1167,16 @@
           <source>Data export started for %1 tables in %2 Companies. Please refresh this page to see the latest export state for the tables. Only those tables that either have had changes since the last export or failed to export last time have been included. The tables for which the exports could not be started have been queued up for later.</source>
           <note from="Developer" annotates="general" priority="2">%1 = Total number of tables to start the export for. %2 = Total number of companies to export for.</note>
           <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Multi Company Export - NamedType ExportStartedTxt</note>
+        </trans-unit>
+        <trans-unit id="Codeunit 3133239958 - NamedType 1986915369" size-unit="char" translate="yes" xml:space="preserve">
+          <source>The export was queued, but no background session could be started for it after %1 attempts. It will be retried with the next export.</source>
+          <note from="Developer" annotates="general" priority="2">%1 = number of attempts</note>
+          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Session Manager - NamedType CouldNotStartSessionErr</note>
+        </trans-unit>
+        <trans-unit id="Codeunit 3133239958 - NamedType 2543695797" size-unit="char" translate="yes" xml:space="preserve">
+          <source>The export was queued, but the table is no longer configured for export.</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Session Manager - NamedType TableNoLongerConfiguredErr</note>
         </trans-unit>
         <trans-unit id="Codeunit 4249570476 - NamedType 3126772150" size-unit="char" translate="yes" xml:space="preserve">
           <source>The field %1 of class %2 is not supported.</source>
@@ -1967,6 +2027,11 @@
           <source># Fields selected</source>
           <note from="Developer" annotates="general" priority="2"></note>
           <note from="Xliff Generator" annotates="general" priority="3">Page ADLSE Setup Tables - Control FieldsChosen - Property Caption</note>
+        </trans-unit>
+        <trans-unit id="Page 3887871207 - Control 3132119869 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
+          <source>Initial Load End Date</source>
+          <note from="Developer" annotates="general" priority="2"></note>
+          <note from="Xliff Generator" annotates="general" priority="3">Page ADLSE Setup Tables - Control Initial Load End Date - Property Caption</note>
         </trans-unit>
         <trans-unit id="Page 3887871207 - Control 3887527536 - Property 2879900210" size-unit="char" translate="yes" xml:space="preserve">
           <source>Initial Load Start Date</source>

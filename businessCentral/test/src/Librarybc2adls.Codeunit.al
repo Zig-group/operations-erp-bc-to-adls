@@ -104,9 +104,16 @@ codeunit 85561 "ADLSE Library - bc2adls"
     end;
 
     procedure CleanUp();
+    var
+        ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSECurrentSession: Record "ADLSE Current Session";
     begin
         ADLSETable.DeleteAll(true);
         ADLSESetup.DeleteAll(true);
+        ADLSEPendingTable.SetRange("Company Name", CompanyName());
+        ADLSEPendingTable.DeleteAll(false);
+        ADLSECurrentSession.SetRange("Company Name", CompanyName());
+        ADLSECurrentSession.DeleteAll(false);
     end;
 
     procedure MockCreateExport(TableId: Integer);

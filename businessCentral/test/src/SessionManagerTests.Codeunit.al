@@ -231,6 +231,230 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // This is verified by the session manager not throwing errors
     end;
 
+    [Test]
+    procedure TestPendingQueue_SaveAndInit()
+    var
+        ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+    begin
+        // [SCENARIO] The pending tables queue is stored in a table and Init clears it
+        // [GIVEN] An empty queue
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+
+        // [WHEN] Two tables are queued, one of them twice
+        ADLSESessionManager.SavePendingTables(StrSubstNo('%1,%2,%1', Database::"Reason Code", Database::"Payment Terms"));
+
+        // [THEN] Both tables are queued once
+        LibraryAssert.IsTrue(ADLSESessionManager.HasPendingTables(), 'The queue should not be empty');
+        ADLSEPendingTable.SetRange("Company Name", CompanyName());
+        LibraryAssert.AreEqual(2, ADLSEPendingTable.Count(), 'Each table should be queued only once');
+
+        // [WHEN] Init is called
+        ADLSESessionManager.Init();
+
+        // [THEN] The queue is empty
+        LibraryAssert.IsFalse(ADLSESessionManager.HasPendingTables(), 'Init should clear the queue');
+    end;
+
+    [Test]
+    procedure TestPendingQueue_RemovedOnTableDelete()
+    var
+        ADLSETable: Record "ADLSE Table";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+    begin
+        // [SCENARIO] Deleting a table from the export setup removes it from the queue
+        // [GIVEN] A queued table
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
+        ADLSETable.Add(Database::"Reason Code");
+        ADLSESessionManager.SavePendingTables(Format(Database::"Reason Code"));
+
+        // [WHEN] The table is deleted from the setup
+        ADLSETable.Get(Database::"Reason Code");
+        ADLSETable.Delete(true);
+
+        // [THEN] The queue is empty
+        LibraryAssert.IsFalse(ADLSESessionManager.HasPendingTables(), 'The deleted table should be removed from the queue');
+    end;
+
+    [Test]
+    procedure TestClearPendingTablesAllCompanies_ClearsQueue()
+    var
+        ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+    begin
+        // [SCENARIO] Stopping the exports clears the queue of all companies
+        // [GIVEN] Tables queued for the current and another company
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        ADLSESessionManager.SavePendingTables(Format(Database::"Reason Code"));
+        ADLSEPendingTable."Company Name" := 'ADLSE Other Company';
+        ADLSEPendingTable."Table ID" := Database::"Reason Code";
+        ADLSEPendingTable.Insert(false);
+
+        // [WHEN] The queues are cleared for all companies
+        ADLSESessionManager.ClearPendingTablesAllCompanies();
+
+        // [THEN] No table is queued anymore
+        ADLSEPendingTable.Reset();
+        LibraryAssert.IsTrue(ADLSEPendingTable.IsEmpty(), 'The queues of all companies should be cleared');
+    end;
+
+    [Test]
+    procedure TestAbandonPendingTables_FailsQueuedRuns()
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+    begin
+        // [SCENARIO] Tables abandoned in the queue get a failed run, so they are exported the next time
+        // [GIVEN] A queued table with a run in process
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterQueued(Database::"Reason Code");
+        ADLSESessionManager.SavePendingTables(Format(Database::"Reason Code"));
+
+        // [WHEN] The queue is abandoned
+        ADLSESessionManager.AbandonPendingTables('Abandoned');
+
+        // [THEN] The queue is empty and the run is failed
+        LibraryAssert.IsFalse(ADLSESessionManager.HasPendingTables(), 'The queue should be empty');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, 'Abandoned');
+    end;
+
+    [Test]
+    procedure TestRegisterQueued_StartedReusesRun()
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        // [SCENARIO] A queued table and its started export share a single run
+        // [GIVEN] No runs for the table
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        DeleteRuns(Database::"Reason Code");
+
+        // [WHEN] The table is queued twice and then started
+        ADLSERun.RegisterQueued(Database::"Reason Code");
+        ADLSERun.RegisterQueued(Database::"Reason Code");
+        ADLSERun.RegisterStarted(Database::"Reason Code");
+
+        // [THEN] There is a single run in process
+        ADLSERun.Reset();
+        ADLSERun.SetRange("Table ID", Database::"Reason Code");
+        LibraryAssert.AreEqual(1, ADLSERun.Count(), 'There should be a single run');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::InProcess, '');
+    end;
+
+    [Test]
+    procedure TestRegisterFailed_MarksRunInProcessAsFailed()
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        // [SCENARIO] RegisterFailed fails the run in process
+        // [GIVEN] A run in process
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterStarted(Database::"Reason Code");
+
+        // [WHEN] The run is registered as failed
+        // [THEN] The run is failed with the error
+        LibraryAssert.IsTrue(ADLSERun.RegisterFailed(Database::"Reason Code", 'Some error', false), 'The run should be registered as failed');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, 'Some error');
+    end;
+
+    [Test]
+    procedure TestRegisterFailed_NoRunInProcess()
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        // [SCENARIO] RegisterFailed does not overwrite a finished run, unless a failed run must be inserted
+        // [GIVEN] A successful run
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        DeleteRuns(Database::"Reason Code");
+        ADLSELibrarybc2adls.MockCreateExport(Database::"Reason Code");
+
+        // [WHEN] The run is registered as failed without inserting
+        // [THEN] Nothing changes
+        LibraryAssert.IsFalse(ADLSERun.RegisterFailed(Database::"Reason Code", 'Some error', false), 'No run should be registered as failed');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Success, '');
+
+        // [WHEN] The run is registered as failed with inserting
+        // [THEN] A failed run is added
+        LibraryAssert.IsTrue(ADLSERun.RegisterFailed(Database::"Reason Code", 'Some error', true), 'A failed run should be inserted');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, 'Some error');
+    end;
+
+    [Test]
+    procedure TestCancelOrphanedRuns_FailsRunsInProcess()
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        // [SCENARIO] Runs left in process by a previous export are failed
+        // [GIVEN] A run in process
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterStarted(Database::"Reason Code");
+
+        // [WHEN] The orphaned runs are cancelled
+        ADLSERun.CancelOrphanedRuns('Orphaned');
+
+        // [THEN] The run is failed with the reason
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, 'Orphaned');
+    end;
+
+    [Test]
+    procedure TestCleanupStaleSessions_RemovesInactiveSession()
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+        ADLSERun: Record "ADLSE Run";
+    begin
+        // [SCENARIO] A session that ended abnormally does not block the next export
+        // [GIVEN] A registered session that is not active, with its run in process
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterStarted(Database::"Reason Code");
+        ADLSECurrentSession."Table ID" := Database::"Reason Code";
+        ADLSECurrentSession."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(ADLSECurrentSession."Company Name"));
+        ADLSECurrentSession."Session ID" := 2147483000;
+        ADLSECurrentSession."Session Unique ID" := CreateGuid();
+        ADLSECurrentSession.Insert(false);
+
+        // [WHEN] Stale sessions are cleaned up
+        LibraryAssert.IsFalse(ADLSECurrentSession.IsTableOwnedByOtherActiveSession(Database::"Reason Code"), 'An inactive session should not own the table');
+        ADLSECurrentSession.CleanupStaleSessions();
+
+        // [THEN] The session is removed, no session is active and the run is failed
+        ADLSECurrentSession.Reset();
+        LibraryAssert.IsFalse(ADLSECurrentSession.Get(Database::"Reason Code", CompanyName()), 'The stale session should be removed');
+        LibraryAssert.IsFalse(ADLSECurrentSession.AreAnySessionsActive(), 'No session should be active');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, '');
+    end;
+
+    local procedure DeleteRuns(TableID: Integer)
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        ADLSERun.SetRange("Table ID", TableID);
+        ADLSERun.DeleteAll(false);
+    end;
+
+    local procedure VerifyLastRun(TableID: Integer; ExpectedState: Enum "ADLSE Run State"; ExpectedError: Text)
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        ADLSERun.SetRange("Table ID", TableID);
+        ADLSERun.FindLast();
+        LibraryAssert.AreEqual(ExpectedState, ADLSERun.State, 'Unexpected state of the last run');
+        if ExpectedError <> '' then
+            LibraryAssert.AreEqual(ExpectedError, ADLSERun.Error, 'Unexpected error of the last run');
+    end;
+
     local procedure Initialize()
     var
         LibraryTestInitialize: Codeunit "Library - Test Initialize";

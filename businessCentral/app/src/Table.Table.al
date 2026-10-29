@@ -138,8 +138,11 @@ table 11007171 "ADLSE Table"
         ADLSETableLastTimestamp: Record "ADLSE Table Last Timestamp";
         ADLSEDeletedRecord: Record "ADLSE Deleted Record";
         ADLSEExternalEvents: Codeunit "ADLSE External Events";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
     begin
         ADLSESetup.SchemaExported();
+
+        ADLSESessionManager.RemoveFromPendingTables(Rec."Table ID");
 
         ADLSETableField.SetRange("Table ID", Rec."Table ID");
         ADLSETableField.DeleteAll(false);
