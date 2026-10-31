@@ -16,6 +16,7 @@ permissionset 11007164 "ADLSE - API"
                   tabledata "ADLSE Setup" = R,
                   tabledata "ADLSE Current Session" = R,
                   tabledata "ADLSE Run" = R,
+                  tabledata "ADLSE Pending Table" = R,
                   tabledata "ADLSE Field" = RI,
                   page "ADLSE Table API v12" = X,
                   page "ADLSE Setup API v12" = X,

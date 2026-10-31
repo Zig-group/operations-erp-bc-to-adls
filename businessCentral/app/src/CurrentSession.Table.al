@@ -146,6 +146,40 @@ table 11007160 "ADLSE Current Session"
         Rec.DeleteAll(false);
     end;
 
+    /// <summary>
+    /// Removes the entries of the current company whose session is no longer active and fails the
+    /// export runs these sessions left in process. Entries of active sessions are kept.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
+    procedure CleanupStaleSessions()
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        Rec.SetRange("Company Name", CopyStr(CompanyName(), 1, 30));
+        if Rec.FindSet(false) then
+            repeat
+                if not IsSessionActive() then begin
+                    CancelStaleRun(Rec."Table ID");
+                    ADLSECurrentSession := Rec;
+                    ADLSECurrentSession.Delete(false);
+                end;
+            until Rec.Next() = 0;
+    end;
+
+    /// <summary>
+    /// Checks whether the export of the table in the current company is registered by an active session other than the current one.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
+    procedure IsTableOwnedByOtherActiveSession(ADLSETableID: Integer): Boolean
+    begin
+        if not Rec.Get(ADLSETableID, CompanyName()) then
+            exit(false);
+        if (Rec."Session ID" = SessionId()) and (Rec."Session Unique ID" = GetActiveSessionIDForSession(SessionId())) then
+            exit(false);
+        exit(IsSessionActive());
+    end;
+
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
     procedure CancelAll()
     var
@@ -164,6 +198,13 @@ table 11007160 "ADLSE Current Session"
     var
         ActiveSession: Record "Active Session";
     begin
+        if not IsNullGuid(Rec."Session Unique ID") then begin
+            // The session may run on another server instance than the current one, so do not filter on the instance.
+            ActiveSession.SetRange("Session ID", Rec."Session ID");
+            ActiveSession.SetRange("Session Unique ID", Rec."Session Unique ID");
+            exit(not ActiveSession.IsEmpty());
+        end;
+
         ActiveSession.SetLoadFields("Session Unique ID");
         if ActiveSession.Get(ServiceInstanceId(), Rec."Session ID") then
             exit(ActiveSession."Session Unique ID" = Rec."Session Unique ID");
