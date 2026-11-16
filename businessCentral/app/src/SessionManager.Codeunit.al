@@ -24,6 +24,10 @@ codeunit 11007173 "ADLSE Session Manager"
 
     procedure StartExport(TableID: Integer; EmitTelemetry: Boolean): Boolean
     begin
+        // A queued table is started by the processing of the pending tables queue, also when another export started meanwhile.
+        if IsTablePending(TableID) then
+            exit(false);
+
         // if the last run failed, ensure that you run again, even though there may be no data differences.
         // Also force the very first run for Open Mirroring, since an empty table would otherwise never get a session
         // (DataChangesExist stays false forever), and would never receive its initial (header-only) snapshot file.

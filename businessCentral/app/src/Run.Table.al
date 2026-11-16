@@ -174,20 +174,30 @@ table 11007166 "ADLSE Run"
     end;
 
     /// <summary>
-    /// Fails all in-process runs of the current company. To be used only when no export session is
-    /// active for the company, so these runs can never be completed anymore.
+    /// Fails the in-process runs of the current company, except those of tables waiting in the pending
+    /// tables queue, which are still started by the processing of the queue. To be used only when no
+    /// export session is active or starting for the company, so these runs can never be completed anymore.
     /// </summary>
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rm')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'r')]
     procedure CancelOrphanedRuns(Reason: Text)
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSEPendingTable: Record "ADLSE Pending Table";
     begin
         Rec.Reset();
         Rec.SetRange("Company Name", CompanyName());
         Rec.SetRange(State, "ADLSE Run State"::InProcess);
-        if Rec.IsEmpty() then
-            exit;
-        Rec.ModifyAll(Ended, CurrentDateTime(), true);
-        Rec.ModifyAll(Error, CopyStr(Reason, 1, MaxStrLen(Rec.Error)), true);
-        Rec.ModifyAll(State, "ADLSE Run State"::Failed, true);
+        if Rec.FindSet(false) then
+            repeat
+                if not ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), Rec."Table ID") then begin
+                    ADLSERun := Rec;
+                    ADLSERun.Ended := CurrentDateTime();
+                    ADLSERun.Error := CopyStr(Reason, 1, MaxStrLen(ADLSERun.Error));
+                    ADLSERun.State := "ADLSE Run State"::Failed;
+                    ADLSERun.Modify(true);
+                end;
+            until Rec.Next() = 0;
     end;
 
     /// <summary>

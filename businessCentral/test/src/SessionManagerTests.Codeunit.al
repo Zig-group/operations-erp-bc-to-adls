@@ -423,20 +423,32 @@ codeunit 85571 "ADLSE Session Manager Tests"
     procedure TestCancelOrphanedRuns_FailsRunsInProcess()
     var
         ADLSERun: Record "ADLSE Run";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
     begin
-        // [SCENARIO] Runs left in process by a previous export are failed
-        // [GIVEN] A run in process
+        // [SCENARIO] Runs left in process by a previous export are failed, but queued tables are kept
+        // [GIVEN] A run in process, and a queued table
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
         ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
+        ADLSESessionManager.ClearPendingTables();
         DeleteRuns(Database::"Reason Code");
+        DeleteRuns(Database::"Payment Terms");
         ADLSERun.RegisterStarted(Database::"Reason Code");
+        ADLSERun.RegisterQueued(Database::"Payment Terms");
+        ADLSESessionManager.SavePendingTables(Format(Database::"Payment Terms"));
 
         // [WHEN] The orphaned runs are cancelled
         ADLSERun.CancelOrphanedRuns('Orphaned');
 
-        // [THEN] The run is failed with the reason
+        // [THEN] The run is failed with the reason, and the run of the queued table stays in process
         VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, 'Orphaned');
+        VerifyLastRun(Database::"Payment Terms", "ADLSE Run State"::InProcess, '');
+        LibraryAssert.IsTrue(ADLSESessionManager.HasPendingTables(), 'The queued table should be kept');
+
+        // [WHEN] An export starts the queued table
+        // [THEN] It is left to the processing of the queue
+        LibraryAssert.IsFalse(ADLSESessionManager.StartExport(Database::"Payment Terms", false), 'A queued table should not be started by another export');
+        ADLSESessionManager.ClearPendingTables();
     end;
 
     [Test]
@@ -533,11 +545,13 @@ codeunit 85571 "ADLSE Session Manager Tests"
     var
         ADLSERun: Record "ADLSE Run";
         AllObjWithCaption: Record AllObjWithCaption;
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
     begin
         // [SCENARIO] A table that is queued or starting keeps the export from being reported as finished
         // [GIVEN] No run is in process
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSESessionManager.ClearPendingTables();
         ADLSERun.CancelOrphanedRuns('');
         LibraryAssert.IsFalse(ADLSERun.AnyRunInProcess(), 'No run should be in process');
 

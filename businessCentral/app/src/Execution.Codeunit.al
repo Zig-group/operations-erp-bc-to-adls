@@ -102,7 +102,6 @@ codeunit 11007167 "ADLSE Execution"
         ADLSESyncCompanies: Record "ADLSE Sync Companies";
         ADLSESetup: Codeunit "ADLSE Setup";
         ADLSECommunication: Codeunit "ADLSE Communication";
-        ADLSESessionManager: Codeunit "ADLSE Session Manager";
         ADLSEStartTableExport: Codeunit "ADLSE Start Table Export";
         ADLSEExternalEvents: Codeunit "ADLSE External Events";
         ADLSEUtil: Codeunit "ADLSE Util";
@@ -114,8 +113,8 @@ codeunit 11007167 "ADLSE Execution"
         ADLSESetup.CheckSetup(ADLSESetupRec);
         EmitTelemetry := ADLSESetupRec."Emit telemetry";
 
-        // No other export session is active, so whatever is still queued or in process will never be completed.
-        ADLSESessionManager.AbandonPendingTables(PreviousExportNotFinishedErr);
+        // No other export session is active or starting, so the runs still in process will never be completed.
+        // Tables waiting in the pending tables queue are kept, as the processing of the queue still starts them.
         ADLSERun.CancelOrphanedRuns(PreviousExportNotFinishedErr);
         Commit();
 
