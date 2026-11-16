@@ -9,8 +9,12 @@ using System.Threading;
 codeunit 11007167 "ADLSE Execution"
 {
     trigger OnRun()
+    var
+        ADLSETable: Record "ADLSE Table";
     begin
-        StartExport();
+        // Runs from the job queue or a background session: an export that is still running must not
+        // make the job queue entry fail, as that stops its recurrence.
+        StartScheduledExport(ADLSETable);
     end;
 
     var
@@ -36,6 +40,22 @@ codeunit 11007167 "ADLSE Execution"
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Field", 'r')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Sync Companies", 'r')]
     internal procedure StartExport(var AdlseTable: Record "ADLSE Table")
+    begin
+        StartExport(AdlseTable, true);
+    end;
+
+    /// <summary>
+    /// Starts the export like StartExport, but skips it without an error when an export is already running.
+    /// </summary>
+    internal procedure StartScheduledExport(var AdlseTable: Record "ADLSE Table")
+    begin
+        StartExport(AdlseTable, false);
+    end;
+
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Field", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Sync Companies", 'r')]
+    local procedure StartExport(var AdlseTable: Record "ADLSE Table"; ErrorIfRunning: Boolean)
     var
         ADLSESetupRec: Record "ADLSE Setup";
         ADLSEField: Record "ADLSE Field";
@@ -56,7 +76,8 @@ codeunit 11007167 "ADLSE Execution"
         ADLSESetup.CheckSetup(ADLSESetupRec);
         EmitTelemetry := ADLSESetupRec."Emit telemetry";
 
-        PrepareNewExport();
+        if not PrepareNewExport(ErrorIfRunning) then
+            exit;
 
         HasSyncCompanyRecord := ADLSESyncCompanies.Get(CompanyName());
         if HasSyncCompanyRecord then begin // Possible Multi Company export Create session So that is can be stopped.
@@ -117,7 +138,7 @@ codeunit 11007167 "ADLSE Execution"
     /// </summary>
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
-    local procedure PrepareNewExport()
+    local procedure PrepareNewExport(ErrorIfRunning: Boolean): Boolean
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSERun: Record "ADLSE Run";
@@ -126,13 +147,16 @@ codeunit 11007167 "ADLSE Execution"
         ADLSECurrentSession.CleanupStaleSessions();
         if ADLSECurrentSession.AreAnySessionsActive() then begin
             Log('ADLSE-051', 'Export not started as an export is already running.', Verbosity::Warning);
-            Error(ExportAlreadyRunningErr);
+            if ErrorIfRunning then
+                Error(ExportAlreadyRunningErr);
+            exit(false);
         end;
 
         // No export session is active, so whatever is still queued or in process will never be completed.
         ADLSESessionManager.AbandonPendingTables(PreviousExportNotFinishedErr);
         ADLSERun.CancelOrphanedRuns(PreviousExportNotFinishedErr);
         Commit();
+        exit(true);
     end;
 
     local procedure RegisterTableStartFailed(TableID: Integer)

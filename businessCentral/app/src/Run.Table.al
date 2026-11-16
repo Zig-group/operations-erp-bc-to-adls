@@ -120,12 +120,8 @@ table 11007166 "ADLSE Run"
                 exit;
             end;
 
-        Rec.Reset();
-        Rec.Init();
-        Rec."Table ID" := TableID;
-        Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
+        InitNewRun(TableID);
         Rec.State := "ADLSE Run State"::InProcess;
-        Rec.Started := CurrentDateTime();
         Rec.Insert(true);
     end;
 
@@ -140,12 +136,8 @@ table 11007166 "ADLSE Run"
             if Rec.State = "ADLSE Run State"::InProcess then
                 exit;
 
-        Rec.Reset();
-        Rec.Init();
-        Rec."Table ID" := TableID;
-        Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
+        InitNewRun(TableID);
         Rec.State := "ADLSE Run State"::InProcess;
-        Rec.Started := CurrentDateTime();
         Rec.Insert(true);
     end;
 
@@ -165,11 +157,7 @@ table 11007166 "ADLSE Run"
         if not InProcess then begin
             if not InsertIfNotInProcess then
                 exit(false);
-            Rec.Reset();
-            Rec.Init();
-            Rec."Table ID" := TableID;
-            Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
-            Rec.Started := CurrentDateTime();
+            InitNewRun(TableID);
             Rec.Insert(true);
         end;
 
@@ -319,6 +307,16 @@ table 11007166 "ADLSE Run"
             exit(false);
         end;
         exit(Rec.State = "ADLSE Run State"::InProcess);
+    end;
+
+    local procedure InitNewRun(TableID: Integer)
+    begin
+        Rec.Reset();
+        Rec.Init();
+        Rec.ID := 0; // Init keeps the primary key of the run loaded before, so let AutoIncrement assign a new one
+        Rec."Table ID" := TableID;
+        Rec."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(Rec."Company Name"));
+        Rec.Started := CurrentDateTime();
     end;
 
     local procedure CommmonFilterOnOldRuns()

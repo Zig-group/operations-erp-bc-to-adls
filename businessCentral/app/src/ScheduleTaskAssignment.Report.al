@@ -18,7 +18,7 @@ report 11007161 "ADLSE Schedule Task Assignment"
             var
                 ADLSEExecution: Codeunit "ADLSE Execution";
             begin
-                ADLSEExecution.StartExport(ADLSETable);
+                ADLSEExecution.StartScheduledExport(ADLSETable);
             end;
         }
     }

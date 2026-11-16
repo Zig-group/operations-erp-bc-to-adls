@@ -261,6 +261,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
     procedure TestPendingQueue_RemovedOnTableDelete()
     var
         ADLSETable: Record "ADLSE Table";
+        ADLSERun: Record "ADLSE Run";
         ADLSESessionManager: Codeunit "ADLSE Session Manager";
     begin
         // [SCENARIO] Deleting a table from the export setup removes it from the queue
@@ -269,14 +270,17 @@ codeunit 85571 "ADLSE Session Manager Tests"
         ADLSELibrarybc2adls.CleanUp();
         ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         ADLSETable.Add(Database::"Reason Code");
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterQueued(Database::"Reason Code");
         ADLSESessionManager.SavePendingTables(Format(Database::"Reason Code"));
 
         // [WHEN] The table is deleted from the setup
         ADLSETable.Get(Database::"Reason Code");
         ADLSETable.Delete(true);
 
-        // [THEN] The queue is empty
+        // [THEN] The queue is empty and the queued run is failed
         LibraryAssert.IsFalse(ADLSESessionManager.HasPendingTables(), 'The deleted table should be removed from the queue');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, '');
     end;
 
     [Test]
@@ -312,6 +316,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // [GIVEN] A queued table with a run in process
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         DeleteRuns(Database::"Reason Code");
         ADLSERun.RegisterQueued(Database::"Reason Code");
         ADLSESessionManager.SavePendingTables(Format(Database::"Reason Code"));
@@ -348,6 +353,30 @@ codeunit 85571 "ADLSE Session Manager Tests"
     end;
 
     [Test]
+    procedure TestRegisterQueued_AfterFinishedRunInsertsNewRun()
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        // [SCENARIO] A new export after a finished run gets its own run
+        // [GIVEN] A successful run
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
+        DeleteRuns(Database::"Reason Code");
+        ADLSELibrarybc2adls.MockCreateExport(Database::"Reason Code");
+
+        // [WHEN] The table is queued and then started again
+        ADLSERun.RegisterQueued(Database::"Reason Code");
+        ADLSERun.RegisterStarted(Database::"Reason Code");
+
+        // [THEN] A second run is in process and the successful run is kept
+        ADLSERun.Reset();
+        ADLSERun.SetRange("Table ID", Database::"Reason Code");
+        LibraryAssert.AreEqual(2, ADLSERun.Count(), 'The new export should insert a new run');
+        VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::InProcess, '');
+    end;
+
+    [Test]
     procedure TestRegisterFailed_MarksRunInProcessAsFailed()
     var
         ADLSERun: Record "ADLSE Run";
@@ -356,6 +385,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // [GIVEN] A run in process
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         DeleteRuns(Database::"Reason Code");
         ADLSERun.RegisterStarted(Database::"Reason Code");
 
@@ -374,6 +404,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // [GIVEN] A successful run
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         DeleteRuns(Database::"Reason Code");
         ADLSELibrarybc2adls.MockCreateExport(Database::"Reason Code");
 
@@ -397,6 +428,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // [GIVEN] A run in process
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         DeleteRuns(Database::"Reason Code");
         ADLSERun.RegisterStarted(Database::"Reason Code");
 
@@ -417,6 +449,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // [GIVEN] A registered session that is not active, with its run in process
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         DeleteRuns(Database::"Reason Code");
         ADLSERun.RegisterStarted(Database::"Reason Code");
         ADLSECurrentSession."Table ID" := Database::"Reason Code";

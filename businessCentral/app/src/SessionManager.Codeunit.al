@@ -273,12 +273,17 @@ codeunit 11007173 "ADLSE Session Manager"
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'rd')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rim')]
     internal procedure RemoveFromPendingTables(TableID: Integer)
     var
         ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSERun: Record "ADLSE Run";
     begin
-        if ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), TableID) then
+        if ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), TableID) then begin
             ADLSEPendingTable.Delete(false);
+            // No session exports the table anymore, so its queued run would otherwise stay in process.
+            ADLSERun.RegisterFailed(TableID, TableNoLongerConfiguredErr, false);
+        end;
     end;
 
     /// <summary>
