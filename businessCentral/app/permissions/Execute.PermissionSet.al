@@ -43,6 +43,7 @@ permissionset 11007160 "ADLSE - Execute"
                   codeunit "ADLSE Execution" = X,
                   codeunit "ADLSE Wrapper Execute" = X,
                   codeunit "ADLSE Start Table Export" = X,
+                  codeunit "ADLSE Run Export" = X,
                   codeunit "ADLSE Pending Export Starter" = X,
                   codeunit "ADLSE Company Run" = X,
                   codeunit "ADLSE Multi Company Export" = X,

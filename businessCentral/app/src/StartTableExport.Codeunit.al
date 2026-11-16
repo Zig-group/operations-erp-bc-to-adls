@@ -16,16 +16,28 @@ codeunit 11007454 "ADLSE Start Table Export"
     var
         ADLSESessionManager: Codeunit "ADLSE Session Manager";
     begin
-        Started := ADLSESessionManager.StartExport(Rec."Table ID", EmitTelemetry);
+        if PendingStart then
+            Started := ADLSESessionManager.StartPendingExport(Rec."Table ID", EmitTelemetry, StartAttempts)
+        else
+            Started := ADLSESessionManager.StartExport(Rec."Table ID", EmitTelemetry);
     end;
 
     var
         EmitTelemetry: Boolean;
         Started: Boolean;
+        PendingStart: Boolean;
+        StartAttempts: Integer;
 
     procedure SetEmitTelemetry(NewEmitTelemetry: Boolean)
     begin
         EmitTelemetry := NewEmitTelemetry;
+    end;
+
+    /// <summary>Starts the table as one taken from the pending tables queue.</summary>
+    procedure SetPendingStart(NewStartAttempts: Integer)
+    begin
+        PendingStart := true;
+        StartAttempts := NewStartAttempts;
     end;
 
     procedure WasStarted(): Boolean

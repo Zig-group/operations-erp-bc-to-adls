@@ -1168,6 +1168,11 @@
           <note from="Developer" annotates="general" priority="2">%1 = Total number of tables to start the export for. %2 = Total number of companies to export for.</note>
           <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Multi Company Export - NamedType ExportStartedTxt</note>
         </trans-unit>
+        <trans-unit id="Codeunit 3133239958 - NamedType 3907913148" size-unit="char" translate="yes" xml:space="preserve">
+          <source>The export was queued, but its export session could not be started after %1 attempts. It will be retried with the next export. Last error: %2</source>
+          <note from="Developer" annotates="general" priority="2">%1 = number of attempts, %2 = error text</note>
+          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Session Manager - NamedType CouldNotStartPendingTableErr</note>
+        </trans-unit>
         <trans-unit id="Codeunit 3133239958 - NamedType 1986915369" size-unit="char" translate="yes" xml:space="preserve">
           <source>The export was queued, but no background session could be started for it after %1 attempts. It will be retried with the next export.</source>
           <note from="Developer" annotates="general" priority="2">%1 = number of attempts</note>

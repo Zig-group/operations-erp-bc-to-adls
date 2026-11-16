@@ -126,17 +126,68 @@ table 11007160 "ADLSE Current Session"
             Error(ExportDataInProgressErr);
     end;
 
+    /// <summary>
+    /// Checks whether another session than the current one is exporting, or holds the export reservation, for the current company.
+    /// </summary>
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
     procedure AreAnySessionsActive() AnyActive: Boolean
     begin
         Rec.SetRange("Company Name", CopyStr(CompanyName(), 1, 30));
         if Rec.FindSet(false) then
             repeat
-                if IsSessionActive() then begin
-                    AnyActive := true;
-                    exit;
-                end;
+                if not IsOwnedByCurrentSession() then
+                    if IsSessionActive() then begin
+                        AnyActive := true;
+                        exit;
+                    end;
             until Rec.Next() = 0;
+    end;
+
+    /// <summary>
+    /// Reserves the export of the current company for the current session, so that no other session can start
+    /// an export or process the pending tables at the same time. Commit to make the reservation visible.
+    /// </summary>
+    /// <returns>False when another active session holds the reservation.</returns>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rid')]
+    procedure TryReserveExport(): Boolean
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        ADLSECurrentSession.ReadIsolation := IsolationLevel::UpdLock;
+        if ADLSECurrentSession.Get(GetExportReservationTableID(), CompanyName()) then begin
+            if ADLSECurrentSession.IsOwnedByCurrentSession() then
+                exit(true);
+            if ADLSECurrentSession.IsSessionActive() then
+                exit(false);
+            ADLSECurrentSession.Delete(false); // the session holding the reservation ended abnormally
+        end;
+
+        ADLSECurrentSession.Init();
+        ADLSECurrentSession."Table ID" := GetExportReservationTableID();
+        ADLSECurrentSession."Session ID" := SessionId();
+        ADLSECurrentSession."Session Unique ID" := GetActiveSessionIDForSession(SessionId());
+        ADLSECurrentSession."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(ADLSECurrentSession."Company Name"));
+        exit(ADLSECurrentSession.Insert(false));
+    end;
+
+    /// <summary>Releases the export reservation of the current company, when the current session holds it.</summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
+    procedure ReleaseExport()
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        if not ADLSECurrentSession.Get(GetExportReservationTableID(), CompanyName()) then
+            exit;
+        if ADLSECurrentSession.IsOwnedByCurrentSession() then
+            if ADLSECurrentSession.Delete(false) then;
+    end;
+
+    /// <summary>
+    /// The export reservation is registered as a session for table ID 0, which is never exported.
+    /// </summary>
+    procedure GetExportReservationTableID(): Integer
+    begin
+        exit(0);
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'd')]
@@ -175,7 +226,7 @@ table 11007160 "ADLSE Current Session"
     begin
         if not Rec.Get(ADLSETableID, CompanyName()) then
             exit(false);
-        if (Rec."Session ID" = SessionId()) and (Rec."Session Unique ID" = GetActiveSessionIDForSession(SessionId())) then
+        if IsOwnedByCurrentSession() then
             exit(false);
         exit(IsSessionActive());
     end;
@@ -187,14 +238,21 @@ table 11007160 "ADLSE Current Session"
     begin
         if Rec.FindSet(false) then
             repeat
-                if IsSessionActive() then
-                    Session.StopSession(Rec."Session ID", StrSubstNo(SessionTerminatedMsg, ADLSEUtil.GetTableCaption(Rec."Table ID")));
+                // The export reservation is held by the session that starts the export, which can be a user's client session.
+                if Rec."Table ID" <> GetExportReservationTableID() then
+                    if IsSessionActive() then
+                        Session.StopSession(Rec."Session ID", StrSubstNo(SessionTerminatedMsg, ADLSEUtil.GetTableCaption(Rec."Table ID")));
             until Rec.Next() = 0;
 
         Rec.DeleteAll(false);
     end;
 
-    local procedure IsSessionActive(): Boolean
+    internal procedure IsOwnedByCurrentSession(): Boolean
+    begin
+        exit((Rec."Session ID" = SessionId()) and (Rec."Session Unique ID" = GetActiveSessionIDForSession(SessionId())));
+    end;
+
+    internal procedure IsSessionActive(): Boolean
     var
         ActiveSession: Record "Active Session";
     begin

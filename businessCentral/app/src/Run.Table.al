@@ -127,14 +127,18 @@ table 11007166 "ADLSE Run"
 
     /// <summary>
     /// Registers an export run as in process for a table whose export session is about to be started
-    /// or has been queued, unless the last run of the table is already in process.
+    /// or has been queued. When the last run of the table is already in process, its start time is
+    /// refreshed, so that a session that is starting for it is recognized as such.
     /// </summary>
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'ri')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
     procedure RegisterQueued(TableID: Integer)
     begin
         if FindLastRun(TableID) then
-            if Rec.State = "ADLSE Run State"::InProcess then
+            if Rec.State = "ADLSE Run State"::InProcess then begin
+                Rec.Started := CurrentDateTime();
+                Rec.Modify(true);
                 exit;
+            end;
 
         InitNewRun(TableID);
         Rec.State := "ADLSE Run State"::InProcess;
@@ -184,6 +188,20 @@ table 11007166 "ADLSE Run"
         Rec.ModifyAll(Ended, CurrentDateTime(), true);
         Rec.ModifyAll(Error, CopyStr(Reason, 1, MaxStrLen(Rec.Error)), true);
         Rec.ModifyAll(State, "ADLSE Run State"::Failed, true);
+    end;
+
+    /// <summary>
+    /// Checks whether a run of the current company is in process. This also covers tables that are
+    /// queued or whose export session is starting, as these are registered as in process up front.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'r')]
+    procedure AnyRunInProcess(): Boolean
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        ADLSERun.SetRange("Company Name", CompanyName());
+        ADLSERun.SetRange(State, "ADLSE Run State"::InProcess);
+        exit(not ADLSERun.IsEmpty());
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'm')]

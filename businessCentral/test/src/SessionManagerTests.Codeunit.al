@@ -469,6 +469,138 @@ codeunit 85571 "ADLSE Session Manager Tests"
         VerifyLastRun(Database::"Reason Code", "ADLSE Run State"::Failed, '');
     end;
 
+    [Test]
+    procedure TestTryReserveExport_TakesOverStaleReservation()
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        // [SCENARIO] The export reservation of a session that ended abnormally does not block the next export
+        // [GIVEN] An export reservation held by a session that is not active
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        InsertInactiveSession(ADLSECurrentSession.GetExportReservationTableID());
+
+        // [WHEN] The export is reserved
+        // [THEN] The reservation is taken over by the current session
+        LibraryAssert.IsTrue(ADLSECurrentSession.TryReserveExport(), 'A stale reservation should be taken over');
+        ADLSECurrentSession.Get(ADLSECurrentSession.GetExportReservationTableID(), CompanyName());
+        LibraryAssert.AreEqual(SessionId(), ADLSECurrentSession."Session ID", 'The reservation should belong to the current session');
+    end;
+
+    [Test]
+    procedure TestReleaseExport_KeepsReservationOfOtherSession()
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        // [SCENARIO] A session only releases its own export reservation
+        // [GIVEN] An export reservation held by another session
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        InsertInactiveSession(ADLSECurrentSession.GetExportReservationTableID());
+
+        // [WHEN] The current session releases the export
+        ADLSECurrentSession.ReleaseExport();
+
+        // [THEN] The reservation of the other session is kept
+        LibraryAssert.IsTrue(ADLSECurrentSession.Get(ADLSECurrentSession.GetExportReservationTableID(), CompanyName()), 'The reservation of another session should be kept');
+    end;
+
+    [Test]
+    procedure TestAreAnySessionsActive_IgnoresOwnReservation()
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        // [SCENARIO] The session that reserved the export can pass the checks for a running export
+        // [GIVEN] The export is reserved by the current session
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        LibraryAssert.IsTrue(ADLSECurrentSession.TryReserveExport(), 'The export should be reserved');
+
+        // [WHEN] Checking for active sessions
+        // [THEN] The own reservation is not counted, but other sessions can see it
+        LibraryAssert.IsFalse(ADLSECurrentSession.AreAnySessionsActive(), 'The own reservation should not count as an active export');
+        LibraryAssert.IsTrue(ADLSECurrentSession.TryReserveExport(), 'Reserving again from the same session should succeed');
+
+        // [WHEN] The export is released
+        ADLSECurrentSession.ReleaseExport();
+
+        // [THEN] The reservation is removed
+        LibraryAssert.IsFalse(ADLSECurrentSession.Get(ADLSECurrentSession.GetExportReservationTableID(), CompanyName()), 'The reservation should be removed');
+    end;
+
+    [Test]
+    procedure TestAnyRunInProcess_CoversQueuedTables()
+    var
+        ADLSERun: Record "ADLSE Run";
+        AllObjWithCaption: Record AllObjWithCaption;
+    begin
+        // [SCENARIO] A table that is queued or starting keeps the export from being reported as finished
+        // [GIVEN] No run is in process
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        ADLSERun.CancelOrphanedRuns('');
+        LibraryAssert.IsFalse(ADLSERun.AnyRunInProcess(), 'No run should be in process');
+
+        // [WHEN] A table is queued for export
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterQueued(Database::"Reason Code");
+
+        // [THEN] A run is in process until the export of the table has ended
+        LibraryAssert.IsTrue(ADLSERun.AnyRunInProcess(), 'The queued run should be in process');
+        AllObjWithCaption.Get(AllObjWithCaption."Object Type"::Table, Database::"Reason Code");
+        ADLSERun.RegisterEnded(Database::"Reason Code", false, AllObjWithCaption."Object Caption");
+        LibraryAssert.IsFalse(ADLSERun.AnyRunInProcess(), 'No run should be in process after the export ended');
+    end;
+
+    [Test]
+    procedure TestAnyExportSessionStarting_RecentUnregisteredRun()
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+    begin
+        // [SCENARIO] A session that was started for a table but has not registered itself yet counts as a running export
+        // [GIVEN] No run is in process
+        Initialize();
+        ADLSELibrarybc2adls.CleanUp();
+        ADLSESessionManager.ClearPendingTables();
+        ADLSERun.CancelOrphanedRuns('');
+        LibraryAssert.IsFalse(ADLSESessionManager.AnyExportSessionStarting(), 'No session should be starting');
+
+        // [WHEN] A session is started for a table
+        DeleteRuns(Database::"Reason Code");
+        ADLSERun.RegisterQueued(Database::"Reason Code");
+
+        // [THEN] The session counts as starting
+        LibraryAssert.IsTrue(ADLSESessionManager.AnyExportSessionStarting(), 'The session should be starting');
+
+        // [WHEN] The table waits in the queue instead
+        ADLSESessionManager.SavePendingTables(Format(Database::"Reason Code"));
+
+        // [THEN] The queued table does not count as a starting session
+        LibraryAssert.IsFalse(ADLSESessionManager.AnyExportSessionStarting(), 'A queued table should not count as a starting session');
+
+        // [WHEN] The table left the queue a long time ago
+        ADLSESessionManager.ClearPendingTables();
+        ADLSERun.SetRange("Table ID", Database::"Reason Code");
+        ADLSERun.FindLast();
+        ADLSERun.Started := CurrentDateTime() - 60 * 60 * 1000;
+        ADLSERun.Modify(false);
+
+        // [THEN] The session is considered lost
+        LibraryAssert.IsFalse(ADLSESessionManager.AnyExportSessionStarting(), 'A session that never registered should be considered lost');
+    end;
+
+    local procedure InsertInactiveSession(TableID: Integer)
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        ADLSECurrentSession."Table ID" := TableID;
+        ADLSECurrentSession."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(ADLSECurrentSession."Company Name"));
+        ADLSECurrentSession."Session ID" := 2147483000;
+        ADLSECurrentSession."Session Unique ID" := CreateGuid();
+        ADLSECurrentSession.Insert(false);
+    end;
+
     local procedure DeleteRuns(TableID: Integer)
     var
         ADLSERun: Record "ADLSE Run";

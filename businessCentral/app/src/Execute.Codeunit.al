@@ -416,7 +416,6 @@ codeunit 11007166 "ADLSE Execute"
         PendingExportsStarted: Boolean;
     begin
         ADLSERun.RegisterEnded(ADLSETable."Table ID", EmitTelemetry, TableCaption);
-        ADLSECurrentSession.Stop(ADLSETable."Table ID", EmitTelemetry, TableCaption);
         if EmitTelemetry then begin
             CustomDimensions.Add('Entity', TableCaption);
             ADLSEExecution.Log('ADLSE-037', 'Finished the export process', Verbosity::Normal, CustomDimensions);
@@ -429,7 +428,11 @@ codeunit 11007166 "ADLSE Execute"
         // operation limits, are spawned up. The queue is consumed as sessions
         // end. Whatever cannot be started now is picked up by the next ending
         // session, or by a scheduled task when no export session is left.
+        // The session stays registered meanwhile, so that no new export can
+        // abandon the tables it takes from the queue.
         PendingExportsStarted := ADLSESessionManager.DrainPendingTables(false);
+        ADLSECurrentSession.Stop(ADLSETable."Table ID", EmitTelemetry, TableCaption);
+        Commit();
         ADLSESessionManager.EnsurePendingQueueProcessing();
 
         // The sessions just started finish the export batch.
@@ -440,19 +443,30 @@ codeunit 11007166 "ADLSE Execute"
     end;
 
     /// <summary>
-    /// Raises the export finished events when no export session is active and no table is waiting in the pending queue.
+    /// Raises the export finished events when no other session is exporting or starting an export, no table is
+    /// waiting in the pending queue, and no run is in process. The latter covers export sessions that were
+    /// started but have not registered themselves yet, as their runs are registered as in process up front.
     /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
     internal procedure NotifyExportFinishedIfDone(var ADLSETable: Record "ADLSE Table"; TableCaption: Text)
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
+        ADLSERun: Record "ADLSE Run";
         ADLSESetupRec: Record "ADLSE Setup";
         ADLSESessionManager: Codeunit "ADLSE Session Manager";
         ADLSEExecution: Codeunit "ADLSE Execution";
         ADLSEExternalEvents: Codeunit "ADLSE External Events";
     begin
+        // Fails the runs of export sessions that ended abnormally, as these would never finish.
+        ADLSECurrentSession.CleanupStaleSessions();
+        Commit();
+
         if ADLSECurrentSession.AreAnySessionsActive() then
             exit;
         if ADLSESessionManager.HasPendingTables() then
+            exit;
+        if ADLSERun.AnyRunInProcess() then
             exit;
 
         ADLSESetupRec.GetSingleton();

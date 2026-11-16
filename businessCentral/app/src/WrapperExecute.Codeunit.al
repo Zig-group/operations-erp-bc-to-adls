@@ -51,15 +51,22 @@ codeunit 11007178 "ADLSE Wrapper Execute"
             exit;
         end;
 
-        ADLSECurrentSession.Stop(ADLSETable."Table ID", false, TableCaption);
         RunFailed := ADLSERun.RegisterFailed(ADLSETable."Table ID", ErrorText, false);
+        Commit();
+
+        // Keep the remaining tables going while this session is still registered, so that no new
+        // export can abandon the tables it takes from the queue.
+        if RunFailed then
+            ADLSESessionManager.DrainPendingTables(false);
+
+        ADLSECurrentSession.Stop(ADLSETable."Table ID", false, TableCaption);
         Commit();
 
         // The run is not in process when the error occurred after the export had already been finalized.
         if not RunFailed then
             exit;
 
-        ADLSESessionManager.StartExportFromPendingTables();
+        ADLSESessionManager.EnsurePendingQueueProcessing();
         ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, TableCaption);
     end;
 }

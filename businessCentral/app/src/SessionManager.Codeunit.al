@@ -2,6 +2,8 @@
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 namespace Zig.ADLSE;
 
+using System.Environment;
+
 codeunit 11007173 "ADLSE Session Manager"
 {
     Access = Internal;
@@ -11,6 +13,7 @@ codeunit 11007173 "ADLSE Session Manager"
         ConcatendatedStringLbl: Label '%1,%2', Locked = true;
         CouldNotStartSessionErr: Label 'The export was queued, but no background session could be started for it after %1 attempts. It will be retried with the next export.', Comment = '%1 = number of attempts';
         TableNoLongerConfiguredErr: Label 'The export was queued, but the table is no longer configured for export.';
+        CouldNotStartPendingTableErr: Label 'The export was queued, but its export session could not be started after %1 attempts. It will be retried with the next export. Last error: %2', Comment = '%1 = number of attempts, %2 = error text';
 
     /// <summary>Clears the pending tables queue of the current company.</summary>
     procedure Init()
@@ -25,6 +28,12 @@ codeunit 11007173 "ADLSE Session Manager"
         // Also force the very first run for Open Mirroring, since an empty table would otherwise never get a session
         // (DataChangesExist stays false forever), and would never receive its initial (header-only) snapshot file.
         exit(StartExport(TableID, false, LastRunFailed(TableID, EmitTelemetry) or NeverRunOnOpenMirroring(TableID), EmitTelemetry, 0));
+    end;
+
+    /// <summary>Starts the export of a table taken from the pending tables queue.</summary>
+    internal procedure StartPendingExport(TableID: Integer; EmitTelemetry: Boolean; StartAttempts: Integer): Boolean
+    begin
+        exit(StartExport(TableID, true, true, EmitTelemetry, StartAttempts));
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
@@ -49,8 +58,11 @@ codeunit 11007173 "ADLSE Session Manager"
             ADLSESetup.GetSingleton();
             if ADLSESetup."Export Company Database Tables" <> '' then
                 if (not ADLSEUtil.IsTablePerCompany(TableID)) then
-                    if (ADLSESetup."Export Company Database Tables" <> CompanyName()) then
+                    if (ADLSESetup."Export Company Database Tables" <> CompanyName()) then begin
+                        if ExportWasPending then
+                            ADLSERun.RegisterFailed(TableID, TableNoLongerConfiguredErr, false);
                         exit;
+                    end;
 
             // Register the run as in process right away, so that a client polling the runs never
             // sees the result of a previous export for a table that is still queued or starting.
@@ -154,9 +166,12 @@ codeunit 11007173 "ADLSE Session Manager"
     internal procedure DrainPendingTables(CountFailedAttempts: Boolean) AnyStarted: Boolean
     var
         ADLSESetup: Record "ADLSE Setup";
+        ADLSETable: Record "ADLSE Table";
+        ADLSEStartTableExport: Codeunit "ADLSE Start Table Export";
         ADLSEExecution: Codeunit "ADLSE Execution";
         CustomDimensions: Dictionary of [Text, Text];
         TableID: Integer;
+        ClaimedAttempts: Integer;
         StartAttempts: Integer;
     begin
         if not HasPendingTables() then
@@ -168,15 +183,59 @@ codeunit 11007173 "ADLSE Session Manager"
             ADLSEExecution.Log('ADLSE-026', 'Export from pending tables starting', Verbosity::Normal, CustomDimensions);
         end;
 
-        while ClaimNextPendingTable(TableID, StartAttempts) do begin
+        while ClaimNextPendingTable(TableID, ClaimedAttempts) do begin
+            StartAttempts := ClaimedAttempts;
             if CountFailedAttempts then
                 StartAttempts += 1;
-            if StartExport(TableID, true, true, ADLSESetup."Emit telemetry", StartAttempts) then
+
+            // Start each table in isolation: the table was already taken from the queue, so an error
+            // must not lose it, nor stop the start of the other tables.
+            Clear(ADLSEStartTableExport);
+            ADLSEStartTableExport.SetEmitTelemetry(ADLSESetup."Emit telemetry");
+            ADLSEStartTableExport.SetPendingStart(StartAttempts);
+            ADLSETable.Init();
+            ADLSETable."Table ID" := TableID;
+            if not ADLSEStartTableExport.Run(ADLSETable) then begin
+                RequeueAfterStartError(TableID, ClaimedAttempts + 1);
+                exit;
+            end;
+
+            if ADLSEStartTableExport.WasStarted() then
                 AnyStarted := true
             else
                 if IsTablePending(TableID) then
-                    exit; // no session available right now; the table went back into the queue
+                    exit // no session available right now; the table went back into the queue
+                else
+                    LastGivenUpTableID := TableID; // the table is not exported, so the export may be finished
         end;
+    end;
+
+    /// <summary>
+    /// Puts a table back into the queue after an error while starting its export, or gives up on it
+    /// when it failed to start too often.
+    /// </summary>
+    local procedure RequeueAfterStartError(TableID: Integer; StartAttempts: Integer)
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSEExecution: Codeunit "ADLSE Execution";
+        ADLSEUtil: Codeunit "ADLSE Util";
+        CustomDimensions: Dictionary of [Text, Text];
+        ErrorText: Text;
+    begin
+        ErrorText := GetLastErrorText();
+        CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(TableID));
+        CustomDimensions.Add('StartAttempts', Format(StartAttempts));
+        CustomDimensions.Add('Error text', ErrorText);
+        CustomDimensions.Add('Error stack', GetLastErrorCallStack());
+        ClearLastError();
+        ADLSEExecution.Log('ADLSE-057', 'Could not start the export of a queued table.', Verbosity::Warning, CustomDimensions);
+
+        if StartAttempts >= GetMaxStartAttempts() then begin
+            ADLSERun.RegisterFailed(TableID, StrSubstNo(CouldNotStartPendingTableErr, StartAttempts, ErrorText), true);
+            Commit();
+            LastGivenUpTableID := TableID;
+        end else
+            PushToPendingTables(TableID, StartAttempts);
     end;
 
     /// <summary>
@@ -194,6 +253,8 @@ codeunit 11007173 "ADLSE Session Manager"
             exit;
         if ADLSECurrentSession.AreAnySessionsActive() then
             exit; // the active export sessions process the queue when they finish
+        if IsPendingStarterScheduled() then
+            exit;
 
         if not TaskScheduler.CanCreateTask() then begin
             ADLSEExecution.Log('ADLSE-054', 'Tables are pending for export, but no task can be scheduled to start them.', Verbosity::Warning);
@@ -208,24 +269,55 @@ codeunit 11007173 "ADLSE Session Manager"
             ADLSEExecution.Log('ADLSE-052', 'Scheduled a task to start the export of the pending tables.', Verbosity::Normal);
     end;
 
+    /// <summary>
+    /// Checks whether a task is already scheduled to process the pending tables, so that no duplicate
+    /// tasks pile up. A task that is running is not counted, so that it can schedule its successor.
+    /// </summary>
+    local procedure IsPendingStarterScheduled(): Boolean
+    var
+        ScheduledTask: Record "Scheduled Task";
+    begin
+        if not ScheduledTask.ReadPermission() then
+            exit(false);
+        ScheduledTask.SetRange("Run Codeunit", Codeunit::"ADLSE Pending Export Starter");
+        ScheduledTask.SetRange(Company, CompanyName());
+        ScheduledTask.SetFilter("Not Before", '>%1', CurrentDateTime());
+        exit(not ScheduledTask.IsEmpty());
+    end;
+
     internal procedure ProcessPendingTablesFromTask()
     var
         ADLSETable: Record "ADLSE Table";
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSEExecute: Codeunit "ADLSE Execute";
         ADLSEUtil: Codeunit "ADLSE Util";
+        AnyStarted: Boolean;
     begin
         if not HasPendingTables() then
             exit;
 
+        // Another session is starting an export or processing the queue; it schedules a retry if needed.
+        if not ADLSECurrentSession.TryReserveExport() then
+            exit;
+        Commit();
+
         // A failure to start a session only counts towards giving up when no export session of
         // our own occupies the background sessions.
-        DrainPendingTables(not ADLSECurrentSession.AreAnySessionsActive());
+        AnyStarted := DrainPendingTables(not ADLSECurrentSession.AreAnySessionsActive());
+        ADLSECurrentSession.ReleaseExport();
+        Commit();
         EnsurePendingQueueProcessing();
 
+        // Export sessions that ended while the queue was reserved left the export finished notification to this session.
+        if AnyStarted then
+            exit;
         if LastGivenUpTableID <> 0 then
-            if ADLSETable.Get(LastGivenUpTableID) then
+            if ADLSETable.Get(LastGivenUpTableID) then begin
                 ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, ADLSEUtil.GetTableCaption(LastGivenUpTableID));
+                exit;
+            end;
+        Clear(ADLSETable);
+        ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, '');
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'r')]
@@ -333,6 +425,35 @@ codeunit 11007173 "ADLSE Session Manager"
         Commit();
         LastGivenUpTableID := TableID;
         ADLSEExecution.Log('ADLSE-053', 'Gave up starting the export session for a queued table.', Verbosity::Error, CustomDimensions);
+    end;
+
+    /// <summary>
+    /// Checks whether an export session was started recently for a table of the current company, but has
+    /// not registered itself yet. Such a session is not yet visible as an active session.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
+    internal procedure AnyExportSessionStarting(): Boolean
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        ADLSERun.SetRange("Company Name", CompanyName());
+        ADLSERun.SetRange(State, "ADLSE Run State"::InProcess);
+        ADLSERun.SetFilter(Started, '>=%1', CurrentDateTime() - GetSessionStartGracePeriod());
+        ADLSERun.SetLoadFields("Table ID");
+        if ADLSERun.FindSet(false) then
+            repeat
+                if not IsTablePending(ADLSERun."Table ID") then
+                    if not ADLSECurrentSession.Get(ADLSERun."Table ID", CompanyName()) then
+                        exit(true);
+            until ADLSERun.Next() = 0;
+        exit(false);
+    end;
+
+    local procedure GetSessionStartGracePeriod(): Duration
+    begin
+        exit(10 * 60 * 1000); // 10 minutes; a session that has not registered itself by then is considered lost
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'r')]
