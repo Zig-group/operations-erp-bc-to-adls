@@ -15,6 +15,7 @@ codeunit 11007161 "ADLSE CDM Util" // Refer Common Data Model https://docs.micro
         CompanyFieldNameLbl: Label '$Company', Locked = true;
         DeliveredDateTimeFieldNameLbl: Label '$DeliveredDateTime', Locked = true;
         ClosingDateFieldNameLbl: Label '$ClosingDate', Locked = true;
+        SystemDeletedFieldNameLbl: Label '$SystemDeleted', Locked = true;
         ExistingFieldCannotBeRemovedErr: Label 'The field %1 in the entity %2 is already present in the data lake and cannot be removed.', Comment = '%1: field name, %2: entity name';
         FieldDataTypeCannotBeChangedErr: Label 'The data type for the field %1 in the entity %2 cannot be changed.', Comment = '%1: field name, %2: entity name';
         RepresentsTableTxt: Label 'Represents the table %1', Comment = '%1: table caption';
@@ -123,6 +124,14 @@ codeunit 11007161 "ADLSE CDM Util" // Refer Common Data Model https://docs.micro
         if ADLSESetup."Delivered DateTime" then begin
             Clear(Column);
             Column.Add('Name', GetDeliveredDateTimeFieldName());
+            Column.Add('DataType', GetOpenMirrorDataFormat(FieldType::DateTime));
+            Column.Add('IsNullable', true);
+            Columns.Add(Column);
+        end;
+
+        if (ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring") and ADLSESetup."Soft Delete Open Mirroring" then begin
+            Clear(Column);
+            Column.Add('Name', GetSystemDeletedFieldName());
             Column.Add('DataType', GetOpenMirrorDataFormat(FieldType::DateTime));
             Column.Add('IsNullable', true);
             Columns.Add(Column);
@@ -253,6 +262,12 @@ codeunit 11007161 "ADLSE CDM Util" // Refer Common Data Model https://docs.micro
             Result.Add(
                 CreateAttributeJson(GetDeliveredDateTimeFieldName(), DataFormat, GetDeliveredDateTimeFieldName(), AppliedTraits, FieldRef.Length(), false));
         end;
+
+        if (ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring") and ADLSESetup."Soft Delete Open Mirroring" then begin
+            GetCDMAttributeDetails(FieldType::DateTime, DataFormat, AppliedTraits);
+            Result.Add(
+                CreateAttributeJson(GetSystemDeletedFieldName(), DataFormat, GetSystemDeletedFieldName(), AppliedTraits, FieldRef.Length(), false));
+        end;
     end;
 
     procedure GetCompanyFieldName(): Text
@@ -275,6 +290,11 @@ codeunit 11007161 "ADLSE CDM Util" // Refer Common Data Model https://docs.micro
     procedure GetClosingDateFieldName(): Text
     begin
         exit(ClosingDateFieldNameLbl);
+    end;
+
+    procedure GetSystemDeletedFieldName(): Text
+    begin
+        exit(SystemDeletedFieldNameLbl);
     end;
 
     procedure IsPrimaryKeyField(TableId: Integer; FieldId: Integer): Boolean
