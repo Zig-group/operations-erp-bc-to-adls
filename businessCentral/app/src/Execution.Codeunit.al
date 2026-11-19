@@ -179,12 +179,22 @@ codeunit 11007167 "ADLSE Execution"
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSESessionManager: Codeunit "ADLSE Session Manager";
+        CustomDimensions: Dictionary of [Text, Text];
         Reserved: Boolean;
+        Reason: Text;
     begin
         ADLSECurrentSession.CleanupStaleSessions();
         Reserved := ADLSECurrentSession.TryReserveExport();
         // Checked after the reservation, so that no other export can start in between.
-        if Reserved and not ADLSECurrentSession.AreAnySessionsActive() and not ADLSESessionManager.AnyExportSessionStarting() then begin
+        if not Reserved then
+            Reason := 'The export is reserved by another session.'
+        else
+            if ADLSECurrentSession.AreAnySessionsActive() then
+                Reason := 'Export sessions of an earlier export are still active.'
+            else
+                if ADLSESessionManager.AnyExportSessionStarting() then
+                    Reason := 'Export sessions of an earlier export are still starting.';
+        if Reason = '' then begin
             Commit(); // makes the reservation visible to other sessions
             exit(true);
         end;
@@ -192,10 +202,43 @@ codeunit 11007167 "ADLSE Execution"
         if Reserved then
             ADLSECurrentSession.ReleaseExport();
         Commit();
-        Log('ADLSE-051', 'Export not started as an export is already running.', Verbosity::Warning);
+        CustomDimensions.Add('Reason', Reason);
+        if ErrorIfRunning then
+            CustomDimensions.Add('Caller', 'Interactive or API')
+        else
+            CustomDimensions.Add('Caller', 'Scheduled');
+        CustomDimensions.Add('Active export sessions', GetActiveExportSessions());
+        Log('ADLSE-051', 'Export not started as an export is already running.', Verbosity::Warning, CustomDimensions);
         if ErrorIfRunning then
             Error(ExportAlreadyRunningErr);
         exit(false);
+    end;
+
+    /// <summary>
+    /// Lists the active sessions, other than the current one, that export or hold the export reservation for the current company.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
+    local procedure GetActiveExportSessions() Sessions: Text
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+        Listed: Integer;
+        NotListed: Integer;
+    begin
+        ADLSECurrentSession.SetRange("Company Name", CopyStr(CompanyName(), 1, MaxStrLen(ADLSECurrentSession."Company Name")));
+        if ADLSECurrentSession.FindSet(false) then
+            repeat
+                if not ADLSECurrentSession.IsOwnedByCurrentSession() then
+                    if ADLSECurrentSession.IsSessionActive() then
+                        if Listed < 20 then begin
+                            if Sessions <> '' then
+                                Sessions += ', ';
+                            Sessions += StrSubstNo('table %1: session %2', ADLSECurrentSession."Table ID", ADLSECurrentSession."Session ID");
+                            Listed += 1;
+                        end else
+                            NotListed += 1;
+            until ADLSECurrentSession.Next() = 0;
+        if NotListed > 0 then
+            Sessions += StrSubstNo(' and %1 more', NotListed);
     end;
 
     /// <summary>

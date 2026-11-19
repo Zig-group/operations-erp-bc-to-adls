@@ -184,6 +184,9 @@ table 11007166 "ADLSE Run"
     var
         ADLSERun: Record "ADLSE Run";
         ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSEExecution: Codeunit "ADLSE Execution";
+        ADLSEUtil: Codeunit "ADLSE Util";
+        CustomDimensions: Dictionary of [Text, Text];
     begin
         Rec.Reset();
         Rec.SetRange("Company Name", CompanyName());
@@ -196,6 +199,12 @@ table 11007166 "ADLSE Run"
                     ADLSERun.Error := CopyStr(Reason, 1, MaxStrLen(ADLSERun.Error));
                     ADLSERun.State := "ADLSE Run State"::Failed;
                     ADLSERun.Modify(true);
+
+                    Clear(CustomDimensions);
+                    CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(ADLSERun."Table ID"));
+                    CustomDimensions.Add('Table ID', Format(ADLSERun."Table ID"));
+                    CustomDimensions.Add('Run started', Format(ADLSERun.Started, 0, 9));
+                    ADLSEExecution.Log('ADLSE-059', 'Failed an export run that was left in process by an earlier export.', Verbosity::Warning, CustomDimensions);
                 end;
             until Rec.Next() = 0;
     end;

@@ -79,7 +79,7 @@ table 11007160 "ADLSE Current Session"
             // platform) without cleaning up after itself, leaving this table permanently
             // stuck. Self-heal by clearing the stale entry and failing the export run it
             // left hanging, so this export can proceed instead of erroring out forever.
-            CancelStaleRun(ADLSETableID);
+            LogStaleSessionRemoved(CancelStaleRun(ADLSETableID));
             Rec.Delete(false);
         end;
 
@@ -93,7 +93,7 @@ table 11007160 "ADLSE Current Session"
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
-    local procedure CancelStaleRun(ADLSETableID: Integer)
+    local procedure CancelStaleRun(ADLSETableID: Integer): Boolean
     var
         ADLSERun: Record "ADLSE Run";
         Status: Enum "ADLSE Run State";
@@ -101,8 +101,30 @@ table 11007160 "ADLSE Current Session"
         ErrorIfAny: Text[2048];
     begin
         ADLSERun.GetLastRunDetails(ADLSETableID, Status, StartedTime, ErrorIfAny);
-        if Status = "ADLSE Run State"::InProcess then
-            ADLSERun.CancelRun(ADLSETableID);
+        if Status <> "ADLSE Run State"::InProcess then
+            exit(false);
+        ADLSERun.CancelRun(ADLSETableID);
+        exit(true);
+    end;
+
+    /// <summary>
+    /// Logs that the entry of a session that ended abnormally (e.g. crashed, killed or restarted) is removed.
+    /// </summary>
+    local procedure LogStaleSessionRemoved(RunCancelled: Boolean)
+    var
+        ADLSEExecution: Codeunit "ADLSE Execution";
+        ADLSEUtil: Codeunit "ADLSE Util";
+        CustomDimensions: Dictionary of [Text, Text];
+    begin
+        if Rec."Table ID" = GetExportReservationTableID() then
+            CustomDimensions.Add('Entity', 'Export reservation')
+        else
+            CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(Rec."Table ID"));
+        CustomDimensions.Add('Table ID', Format(Rec."Table ID"));
+        CustomDimensions.Add('Session ID', Format(Rec."Session ID"));
+        CustomDimensions.Add('Session registered at', Format(Rec.SystemCreatedAt, 0, 9));
+        CustomDimensions.Add('Run cancelled', Format(RunCancelled, 0, 9));
+        ADLSEExecution.Log('ADLSE-058', 'Removed the entry of an export session that is no longer active.', Verbosity::Warning, CustomDimensions);
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
@@ -159,7 +181,9 @@ table 11007160 "ADLSE Current Session"
                 exit(true);
             if ADLSECurrentSession.IsSessionActive() then
                 exit(false);
-            ADLSECurrentSession.Delete(false); // the session holding the reservation ended abnormally
+            // the session holding the reservation ended abnormally
+            ADLSECurrentSession.LogStaleSessionRemoved(false);
+            ADLSECurrentSession.Delete(false);
         end;
 
         ADLSECurrentSession.Init();
@@ -211,7 +235,7 @@ table 11007160 "ADLSE Current Session"
         if Rec.FindSet(false) then
             repeat
                 if not IsSessionActive() then begin
-                    CancelStaleRun(Rec."Table ID");
+                    LogStaleSessionRemoved(CancelStaleRun(Rec."Table ID"));
                     ADLSECurrentSession := Rec;
                     ADLSECurrentSession.Delete(false);
                 end;
