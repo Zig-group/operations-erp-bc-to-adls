@@ -110,7 +110,7 @@ table 11007160 "ADLSE Current Session"
     /// <summary>
     /// Logs that the entry of a session that ended abnormally (e.g. crashed, killed or restarted) is removed.
     /// </summary>
-    local procedure LogStaleSessionRemoved(RunCancelled: Boolean)
+    internal procedure LogStaleSessionRemoved(RunCancelled: Boolean)
     var
         ADLSEExecution: Codeunit "ADLSE Execution";
         ADLSEUtil: Codeunit "ADLSE Util";
