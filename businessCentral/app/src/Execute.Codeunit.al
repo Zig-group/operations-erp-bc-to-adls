@@ -414,44 +414,75 @@ codeunit 11007166 "ADLSE Execute"
     var
         ADLSERun: Record "ADLSE Run";
         ADLSECurrentSession: Record "ADLSE Current Session";
-        ADLSESetupRec: Record "ADLSE Setup";
         ADLSESessionManager: Codeunit "ADLSE Session Manager";
         ADLSEExecution: Codeunit "ADLSE Execution";
-        ADLSEExternalEvents: Codeunit "ADLSE External Events";
         CustomDimensions: Dictionary of [Text, Text];
     begin
         ADLSERun.RegisterEnded(ADLSETable."Table ID", EmitTelemetry, TableCaption);
-        ADLSECurrentSession.Stop(ADLSETable."Table ID", EmitTelemetry, TableCaption);
         if EmitTelemetry then begin
             CustomDimensions.Add('Entity', TableCaption);
             ADLSEExecution.Log('ADLSE-037', 'Finished the export process', Verbosity::Normal, CustomDimensions);
         end;
         Commit(); //To avoid misreading
 
-        // This export session is soon going to end. Start up a new one from 
-        // the stored list of pending tables to export.
+        // This export session is soon going to end. Start up new ones from 
+        // the pending tables queue, as long as sessions can be started.
         // Note that initially as many export sessions, as is allowed per the 
-        // operation limits, are spawned up. The following line continously 
-        // add to the number of sessions by consuming the pending backlog, thus
-        // prolonging the time to finish an export batch. If this is a concern, 
-        // consider commenting out the line below so no futher sessions are 
-        // spawned when the active ones end. This may result in some table 
-        // exports being skipped. But they may become active in the next export 
-        // batch. 
-        ADLSESessionManager.StartExportFromPendingTables();
+        // operation limits, are spawned up. The queue is consumed as sessions
+        // end. Whatever cannot be started now is picked up by the next ending
+        // session, or by a scheduled task when no export session is left.
+        // The session stays registered meanwhile, so that no new export can
+        // abandon the tables it takes from the queue.
+        ADLSESessionManager.DrainPendingTables(false);
+        ADLSECurrentSession.Stop(ADLSETable."Table ID", EmitTelemetry, TableCaption);
+        Commit();
+        ADLSESessionManager.EnsurePendingQueueProcessing();
 
-
-
-        if not ADLSECurrentSession.AreAnySessionsActive() then begin
-            ADLSESetupRec.GetSingleton();
-            ADLSEExternalEvents.OnExportFinished(ADLSESetupRec, ADLSETable);
-            OnExportFinished(ADLSETable, TableCaption);
-
-            if EmitTelemetry then
-                ADLSEExecution.Log('ADLSE-041', 'All exports are finished', Verbosity::Normal);
-        end;
+        // Also when sessions were just started from the queue: one of them may already have finished while
+        // this session was still registered, and left the notification to this session. The check covers
+        // the sessions still running, as their runs are registered as in process up front.
+        NotifyExportFinishedIfDone(ADLSETable, TableCaption);
 
         OnAfterSetStateFinished(ADLSETable, TableCaption);
+    end;
+
+    /// <summary>
+    /// Raises the export finished events when no other session is exporting or starting an export, no table is
+    /// waiting in the pending queue, and no run is in process. The latter covers export sessions that were
+    /// started but have not registered themselves yet, as their runs are registered as in process up front.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
+    internal procedure NotifyExportFinishedIfDone(var ADLSETable: Record "ADLSE Table"; TableCaption: Text)
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+        ADLSERun: Record "ADLSE Run";
+        ADLSESetupRec: Record "ADLSE Setup";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+        ADLSEExecution: Codeunit "ADLSE Execution";
+        ADLSEExternalEvents: Codeunit "ADLSE External Events";
+    begin
+        // Fails the runs of export sessions that ended abnormally, as these would never finish.
+        ADLSECurrentSession.CleanupStaleSessions();
+        Commit();
+
+        if ADLSECurrentSession.AreAnySessionsActive() then
+            exit;
+        if ADLSESessionManager.HasPendingTables() then
+            exit;
+        if ADLSERun.AnyRunInProcess() then
+            exit;
+
+        ADLSESetupRec.GetSingleton();
+        // The session starting the export or processing the queue may not know a finished table.
+        if ADLSETable."Table ID" = 0 then
+            ADLSEExternalEvents.OnAllExportIsFinished(ADLSESetupRec)
+        else
+            ADLSEExternalEvents.OnExportFinished(ADLSESetupRec, ADLSETable);
+        OnExportFinished(ADLSETable, TableCaption);
+
+        if ADLSESetupRec."Emit telemetry" then
+            ADLSEExecution.Log('ADLSE-041', 'All exports are finished', Verbosity::Normal);
     end;
 
     internal procedure UpdateInProgressTableTimestamp(var Rec: Record "ADLSE Table"; LastTimestamp: BigInteger; Deletes: Boolean)

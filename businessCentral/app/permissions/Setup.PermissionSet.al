@@ -22,6 +22,7 @@ permissionset 11007161 "ADLSE - Setup"
                   tabledata "ADLSE Current Session" = R,
                   tabledata "ADLSE Table Last Timestamp" = RID,
                   tabledata "ADLSE Run" = RD,
+                  tabledata "ADLSE Pending Table" = RD,
                   tabledata "ADLSE Enum Translation" = RIMD,
                   tabledata "ADLSE Enum Translation Lang" = RIMD,
                   tabledata "Deleted Tables Not to Sync" = RIMD,

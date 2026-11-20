@@ -107,15 +107,120 @@ table 11007166 "ADLSE Run"
         exit(Round(Ended - Started, 100));
     end;
 
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'i')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
     procedure RegisterStarted(TableID: Integer)
     begin
-        Rec.Init();
-        Rec."Table ID" := TableID;
-        Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
+        // Reuse the run registered when the export was queued or started, so that each export has a single run.
+        if FindLastRun(TableID) then
+            if Rec.State = "ADLSE Run State"::InProcess then begin
+                Rec.Started := CurrentDateTime();
+                Rec.Ended := 0DT;
+                Rec.Error := '';
+                Rec.Modify(true);
+                exit;
+            end;
+
+        InitNewRun(TableID);
         Rec.State := "ADLSE Run State"::InProcess;
-        Rec.Started := CurrentDateTime();
         Rec.Insert(true);
+    end;
+
+    /// <summary>
+    /// Registers an export run as in process for a table whose export session is about to be started
+    /// or has been queued. When the last run of the table is already in process, its start time is
+    /// refreshed, so that a session that is starting for it is recognized as such.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
+    procedure RegisterQueued(TableID: Integer)
+    begin
+        if FindLastRun(TableID) then
+            if Rec.State = "ADLSE Run State"::InProcess then begin
+                Rec.Started := CurrentDateTime();
+                Rec.Modify(true);
+                exit;
+            end;
+
+        InitNewRun(TableID);
+        Rec.State := "ADLSE Run State"::InProcess;
+        Rec.Insert(true);
+    end;
+
+    /// <summary>
+    /// Marks the in-process run of a table as failed. When the last run is not in process, a failed run
+    /// is inserted only if InsertIfNotInProcess is set, so the next export is forced for the table.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
+    procedure RegisterFailed(TableID: Integer; ErrorText: Text; InsertIfNotInProcess: Boolean) Registered: Boolean
+    var
+        ADLSEExternalEvents: Codeunit "ADLSE External Events";
+        InProcess: Boolean;
+    begin
+        if FindLastRun(TableID) then
+            InProcess := Rec.State = "ADLSE Run State"::InProcess;
+
+        if not InProcess then begin
+            if not InsertIfNotInProcess then
+                exit(false);
+            InitNewRun(TableID);
+            Rec.Insert(true);
+        end;
+
+        Rec.State := "ADLSE Run State"::Failed;
+        Rec.Error := CopyStr(ErrorText, 1, MaxStrLen(Rec.Error));
+        Rec.Ended := CurrentDateTime();
+        Rec.Modify(true);
+        ADLSEExternalEvents.OnTableExportRunEnded(Rec.ID, Rec.Started, Rec.Ended, Rec."Table ID", Rec.State);
+        exit(true);
+    end;
+
+    /// <summary>
+    /// Fails the in-process runs of the current company, except those of tables waiting in the pending
+    /// tables queue, which are still started by the processing of the queue. To be used only when no
+    /// export session is active or starting for the company, so these runs can never be completed anymore.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rm')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'r')]
+    procedure CancelOrphanedRuns(Reason: Text)
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSEExecution: Codeunit "ADLSE Execution";
+        ADLSEUtil: Codeunit "ADLSE Util";
+        CustomDimensions: Dictionary of [Text, Text];
+    begin
+        Rec.Reset();
+        Rec.SetRange("Company Name", CompanyName());
+        Rec.SetRange(State, "ADLSE Run State"::InProcess);
+        if Rec.FindSet(false) then
+            repeat
+                if not ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), Rec."Table ID") then begin
+                    ADLSERun := Rec;
+                    ADLSERun.Ended := CurrentDateTime();
+                    ADLSERun.Error := CopyStr(Reason, 1, MaxStrLen(ADLSERun.Error));
+                    ADLSERun.State := "ADLSE Run State"::Failed;
+                    ADLSERun.Modify(true);
+
+                    Clear(CustomDimensions);
+                    CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(ADLSERun."Table ID"));
+                    CustomDimensions.Add('Table ID', Format(ADLSERun."Table ID"));
+                    CustomDimensions.Add('Run started', Format(ADLSERun.Started, 0, 9));
+                    ADLSEExecution.Log('ADLSE-059', 'Failed an export run that was left in process by an earlier export.', Verbosity::Warning, CustomDimensions);
+                end;
+            until Rec.Next() = 0;
+    end;
+
+    /// <summary>
+    /// Checks whether a run of the current company is in process. This also covers tables that are
+    /// queued or whose export session is starting, as these are registered as in process up front.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'r')]
+    procedure AnyRunInProcess(): Boolean
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        ADLSERun.SetRange("Company Name", CompanyName());
+        ADLSERun.SetRange(State, "ADLSE Run State"::InProcess);
+        exit(not ADLSERun.IsEmpty());
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'm')]
@@ -239,6 +344,16 @@ table 11007166 "ADLSE Run"
             exit(false);
         end;
         exit(Rec.State = "ADLSE Run State"::InProcess);
+    end;
+
+    local procedure InitNewRun(TableID: Integer)
+    begin
+        Rec.Reset();
+        Rec.Init();
+        Rec.ID := 0; // Init keeps the primary key of the run loaded before, so let AutoIncrement assign a new one
+        Rec."Table ID" := TableID;
+        Rec."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(Rec."Company Name"));
+        Rec.Started := CurrentDateTime();
     end;
 
     local procedure CommmonFilterOnOldRuns()
