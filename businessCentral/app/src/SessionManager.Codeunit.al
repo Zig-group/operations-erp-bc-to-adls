@@ -9,7 +9,7 @@ codeunit 11007173 "ADLSE Session Manager"
     Access = Internal;
 
     var
-        LastGivenUpTableID: Integer;
+        LastProcessedTableID: Integer;
         ConcatendatedStringLbl: Label '%1,%2', Locked = true;
         CouldNotStartSessionErr: Label 'The export was queued, but no background session could be started for it after %1 attempts. It will be retried with the next export.', Comment = '%1 = number of attempts';
         TableNoLongerConfiguredErr: Label 'The export was queued, but the table is no longer configured for export.';
@@ -204,13 +204,14 @@ codeunit 11007173 "ADLSE Session Manager"
                 exit;
             end;
 
-            if ADLSEStartTableExport.WasStarted() then
-                AnyStarted := true
-            else
+            if ADLSEStartTableExport.WasStarted() then begin
+                AnyStarted := true;
+                LastProcessedTableID := TableID;
+            end else
                 if IsTablePending(TableID) then
                     exit // no session available right now; the table went back into the queue
                 else
-                    LastGivenUpTableID := TableID; // the table is not exported, so the export may be finished
+                    LastProcessedTableID := TableID; // the table is not exported, so the export may be finished
         end;
     end;
 
@@ -237,7 +238,7 @@ codeunit 11007173 "ADLSE Session Manager"
         if StartAttempts >= GetMaxStartAttempts() then begin
             ADLSERun.RegisterFailed(TableID, StrSubstNo(CouldNotStartPendingTableErr, StartAttempts, ErrorText), true);
             Commit();
-            LastGivenUpTableID := TableID;
+            LastProcessedTableID := TableID;
         end else
             PushToPendingTables(TableID, StartAttempts);
     end;
@@ -260,8 +261,11 @@ codeunit 11007173 "ADLSE Session Manager"
     begin
         if not HasPendingTables() then
             exit;
-        if ADLSECurrentSession.AreAnySessionsActive() then
-            exit; // the active export sessions process the queue when they finish
+        // The active export sessions process the queue when they finish. The starter task schedules its successor
+        // regardless: a session finishing before the starter task ends would still see it as scheduled and skip.
+        if not CalledFromStarterTask then
+            if ADLSECurrentSession.AreAnySessionsActive() then
+                exit;
         if IsPendingStarterScheduled(CalledFromStarterTask) then
             exit;
 
@@ -321,9 +325,10 @@ codeunit 11007173 "ADLSE Session Manager"
 
         // Export sessions that ended while the queue was reserved, including the ones just started, left the
         // export finished notification to this session. The check covers the sessions still running.
-        if LastGivenUpTableID <> 0 then
-            if ADLSETable.Get(LastGivenUpTableID) then begin
-                ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, ADLSEUtil.GetTableCaption(LastGivenUpTableID));
+        // Without a processed table, only the event that all exports are finished is raised.
+        if LastProcessedTableID <> 0 then
+            if ADLSETable.Get(LastProcessedTableID) then begin
+                ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, ADLSEUtil.GetTableCaption(LastProcessedTableID));
                 exit;
             end;
         Clear(ADLSETable);
@@ -433,7 +438,7 @@ codeunit 11007173 "ADLSE Session Manager"
     begin
         ADLSERun.RegisterFailed(TableID, StrSubstNo(CouldNotStartSessionErr, StartAttempts), true);
         Commit();
-        LastGivenUpTableID := TableID;
+        LastProcessedTableID := TableID;
         ADLSEExecution.Log('ADLSE-053', 'Gave up starting the export session for a queued table.', Verbosity::Error, CustomDimensions);
     end;
 

@@ -474,7 +474,11 @@ codeunit 11007166 "ADLSE Execute"
             exit;
 
         ADLSESetupRec.GetSingleton();
-        ADLSEExternalEvents.OnExportFinished(ADLSESetupRec, ADLSETable);
+        // The session starting the export or processing the queue may not know a finished table.
+        if ADLSETable."Table ID" = 0 then
+            ADLSEExternalEvents.OnAllExportIsFinished(ADLSESetupRec)
+        else
+            ADLSEExternalEvents.OnExportFinished(ADLSESetupRec, ADLSETable);
         OnExportFinished(ADLSETable, TableCaption);
 
         if ADLSESetupRec."Emit telemetry" then
