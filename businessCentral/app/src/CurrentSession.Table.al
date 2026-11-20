@@ -288,6 +288,25 @@ table 11007160 "ADLSE Current Session"
     end;
 
     internal procedure IsSessionActive(): Boolean
+    begin
+        if IsListedAsActiveSession() then
+            exit(true);
+        // The active sessions do not reliably include a web service session that is still running, e.g. one handled by
+        // another server instance. Starting an export takes seconds, so a recent export reservation is still in use.
+        exit(IsRecentExportReservation());
+    end;
+
+    local procedure IsRecentExportReservation(): Boolean
+    var
+        ReservationValidityMs: Integer;
+    begin
+        if Rec."Table ID" <> GetExportReservationTableID() then
+            exit(false);
+        ReservationValidityMs := 15 * 60 * 1000;
+        exit((CurrentDateTime() - Rec.SystemCreatedAt) < ReservationValidityMs);
+    end;
+
+    local procedure IsListedAsActiveSession(): Boolean
     var
         ActiveSession: Record "Active Session";
     begin
