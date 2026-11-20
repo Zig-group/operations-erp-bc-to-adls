@@ -15,14 +15,20 @@ codeunit 11007455 "ADLSE Run Export"
     var
         ADLSEExecution: Codeunit "ADLSE Execution";
     begin
-        StartedCount := ADLSEExecution.RunExport(Rec);
+        StartedCount := ADLSEExecution.RunExport(Rec, FailedToStartCount);
     end;
 
     var
         StartedCount: Integer;
+        FailedToStartCount: Integer;
 
     procedure GetStartedCount(): Integer
     begin
         exit(StartedCount);
+    end;
+
+    procedure GetFailedToStartCount(): Integer
+    begin
+        exit(FailedToStartCount);
     end;
 }

@@ -247,6 +247,11 @@ codeunit 11007173 "ADLSE Session Manager"
     /// export session is left that would pick them up when it finishes.
     /// </summary>
     internal procedure EnsurePendingQueueProcessing()
+    begin
+        SchedulePendingStarterIfNeeded(false);
+    end;
+
+    local procedure SchedulePendingStarterIfNeeded(CalledFromStarterTask: Boolean)
     var
         ADLSESetup: Record "ADLSE Setup";
         ADLSECurrentSession: Record "ADLSE Current Session";
@@ -257,7 +262,7 @@ codeunit 11007173 "ADLSE Session Manager"
             exit;
         if ADLSECurrentSession.AreAnySessionsActive() then
             exit; // the active export sessions process the queue when they finish
-        if IsPendingStarterScheduled() then
+        if IsPendingStarterScheduled(CalledFromStarterTask) then
             exit;
 
         if not TaskScheduler.CanCreateTask() then begin
@@ -275,9 +280,11 @@ codeunit 11007173 "ADLSE Session Manager"
 
     /// <summary>
     /// Checks whether a task is already scheduled to process the pending tables, so that no duplicate
-    /// tasks pile up. A task that is running is not counted, so that it can schedule its successor.
+    /// tasks pile up. Overdue tasks still waiting for a free background session are counted as well.
+    /// A task stays scheduled while it runs, so the running starter task excludes itself to be able to
+    /// schedule its successor.
     /// </summary>
-    local procedure IsPendingStarterScheduled(): Boolean
+    local procedure IsPendingStarterScheduled(CalledFromStarterTask: Boolean): Boolean
     var
         ScheduledTask: Record "Scheduled Task";
     begin
@@ -285,7 +292,8 @@ codeunit 11007173 "ADLSE Session Manager"
             exit(false);
         ScheduledTask.SetRange("Run Codeunit", Codeunit::"ADLSE Pending Export Starter");
         ScheduledTask.SetRange(Company, CompanyName());
-        ScheduledTask.SetFilter("Not Before", '>%1', CurrentDateTime());
+        if CalledFromStarterTask then
+            exit(ScheduledTask.Count() > 1);
         exit(not ScheduledTask.IsEmpty());
     end;
 
@@ -309,7 +317,7 @@ codeunit 11007173 "ADLSE Session Manager"
         DrainPendingTables(not ADLSECurrentSession.AreAnySessionsActive());
         ADLSECurrentSession.ReleaseExport();
         Commit();
-        EnsurePendingQueueProcessing();
+        SchedulePendingStarterIfNeeded(true);
 
         // Export sessions that ended while the queue was reserved, including the ones just started, left the
         // export finished notification to this session. The check covers the sessions still running.

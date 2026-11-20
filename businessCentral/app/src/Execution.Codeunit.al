@@ -78,7 +78,7 @@ codeunit 11007167 "ADLSE Execution"
         // While the export was reserved, ending export sessions left the pending tables and the
         // export finished notification to this session.
         ADLSESessionManager.EnsurePendingQueueProcessing();
-        if (ADLSERunExport.GetStartedCount() > 0) or not ExportSucceeded then
+        if (ADLSERunExport.GetStartedCount() > 0) or (ADLSERunExport.GetFailedToStartCount() > 0) or not ExportSucceeded then
             ADLSEExecute.NotifyExportFinishedIfDone(AdlseTable, ADLSEUtil.GetTableCaption(AdlseTable."Table ID"));
 
         if not ExportSucceeded then
@@ -93,7 +93,7 @@ codeunit 11007167 "ADLSE Execution"
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Field", 'r')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Sync Companies", 'r')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
-    internal procedure RunExport(var AdlseTable: Record "ADLSE Table") Started: Integer
+    internal procedure RunExport(var AdlseTable: Record "ADLSE Table"; var FailedToStart: Integer) Started: Integer
     var
         ADLSESetupRec: Record "ADLSE Setup";
         ADLSERun: Record "ADLSE Run";
@@ -107,8 +107,8 @@ codeunit 11007167 "ADLSE Execution"
         ADLSEUtil: Codeunit "ADLSE Util";
         CustomDimensions: Dictionary of [Text, Text];
         Counter: Integer;
-        FailedToStart: Integer;
         HasSyncCompanyRecord: Boolean;
+        ExportStopped: Boolean;
     begin
         ADLSESetup.CheckSetup(ADLSESetupRec);
         EmitTelemetry := ADLSESetupRec."Emit telemetry";
@@ -141,19 +141,26 @@ codeunit 11007167 "ADLSE Execution"
                     // Start each table in isolation, so that an error for one table (e.g. a lock timeout
                     // while checking for changes) neither aborts nor skips the export of the other tables.
                     Commit();
-                    Clear(ADLSEStartTableExport);
-                    ADLSEStartTableExport.SetEmitTelemetry(EmitTelemetry);
-                    if ADLSEStartTableExport.Run(ADLSETable) then begin
-                        if ADLSEStartTableExport.WasStarted() then
-                            Started += 1;
+                    // The export was stopped meanwhile, which removed the reservation of this session.
+                    if not ADLSECurrentSession.IsExportReservedByCurrentSession() then begin
+                        ExportStopped := true;
+                        LogExportStoppedWhileStarting(Started, Counter);
                     end else begin
-                        FailedToStart += 1;
-                        RegisterTableStartFailed(ADLSETable."Table ID");
+                        Clear(ADLSEStartTableExport);
+                        ADLSEStartTableExport.SetEmitTelemetry(EmitTelemetry);
+                        if ADLSEStartTableExport.Run(ADLSETable) then begin
+                            if ADLSEStartTableExport.WasStarted() then
+                                Started += 1;
+                        end else begin
+                            FailedToStart += 1;
+                            RegisterTableStartFailed(ADLSETable."Table ID");
+                        end;
                     end;
                 end;
-            until ADLSETable.Next() = 0;
+            until (ADLSETable.Next() = 0) or ExportStopped;
 
-        if HasSyncCompanyRecord then begin
+        // When the export was stopped, the session entry was already removed and may have been reused by a new export.
+        if HasSyncCompanyRecord and not ExportStopped then begin
             Commit(); // End the read-only transaction before deleting
             ADLSECurrentSession.Stop(Database::"ADLSE Sync Companies", EmitTelemetry, ADLSEUtil.GetTableCaption(Database::"ADLSE Sync Companies"));
         end;
@@ -271,6 +278,15 @@ codeunit 11007167 "ADLSE Execution"
         ADLSERun.RegisterFailed(TableID, StrSubstNo(CouldNotStartExportErr, ErrorText), true);
         Commit();
         Log('ADLSE-055', 'Could not start the export for a table.', Verbosity::Error, CustomDimensions);
+    end;
+
+    local procedure LogExportStoppedWhileStarting(Started: Integer; Counter: Integer)
+    var
+        CustomDimensions: Dictionary of [Text, Text];
+    begin
+        CustomDimensions.Add('Started', Format(Started));
+        CustomDimensions.Add('Tables processed', Format(Counter - 1));
+        Log('ADLSE-060', 'The export was stopped while the tables were being started. No further tables are started.', Verbosity::Warning, CustomDimensions);
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Setup", 'r')]

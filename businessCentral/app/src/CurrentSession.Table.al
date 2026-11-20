@@ -214,6 +214,17 @@ table 11007160 "ADLSE Current Session"
         exit(0);
     end;
 
+    /// <summary>Checks whether the current session still holds the export reservation of the current company.</summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
+    internal procedure IsExportReservedByCurrentSession(): Boolean
+    var
+        ADLSECurrentSession: Record "ADLSE Current Session";
+    begin
+        if not ADLSECurrentSession.Get(GetExportReservationTableID(), CompanyName()) then
+            exit(false);
+        exit(ADLSECurrentSession.IsOwnedByCurrentSession());
+    end;
+
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'd')]
     procedure CleanupSessions()
     begin
