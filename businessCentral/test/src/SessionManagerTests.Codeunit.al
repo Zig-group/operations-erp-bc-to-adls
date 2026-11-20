@@ -551,6 +551,7 @@ codeunit 85571 "ADLSE Session Manager Tests"
         // [GIVEN] No run is in process
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
+        ADLSELibrarybc2adls.CreateAdlseSetup("Storage Type"::"Azure Data Lake");
         ADLSESessionManager.ClearPendingTables();
         ADLSERun.CancelOrphanedRuns('');
         LibraryAssert.IsFalse(ADLSERun.AnyRunInProcess(), 'No run should be in process');

@@ -417,7 +417,6 @@ codeunit 11007166 "ADLSE Execute"
         ADLSESessionManager: Codeunit "ADLSE Session Manager";
         ADLSEExecution: Codeunit "ADLSE Execution";
         CustomDimensions: Dictionary of [Text, Text];
-        PendingExportsStarted: Boolean;
     begin
         ADLSERun.RegisterEnded(ADLSETable."Table ID", EmitTelemetry, TableCaption);
         if EmitTelemetry then begin
@@ -434,14 +433,15 @@ codeunit 11007166 "ADLSE Execute"
         // session, or by a scheduled task when no export session is left.
         // The session stays registered meanwhile, so that no new export can
         // abandon the tables it takes from the queue.
-        PendingExportsStarted := ADLSESessionManager.DrainPendingTables(false);
+        ADLSESessionManager.DrainPendingTables(false);
         ADLSECurrentSession.Stop(ADLSETable."Table ID", EmitTelemetry, TableCaption);
         Commit();
         ADLSESessionManager.EnsurePendingQueueProcessing();
 
-        // The sessions just started finish the export batch.
-        if not PendingExportsStarted then
-            NotifyExportFinishedIfDone(ADLSETable, TableCaption);
+        // Also when sessions were just started from the queue: one of them may already have finished while
+        // this session was still registered, and left the notification to this session. The check covers
+        // the sessions still running, as their runs are registered as in process up front.
+        NotifyExportFinishedIfDone(ADLSETable, TableCaption);
 
         OnAfterSetStateFinished(ADLSETable, TableCaption);
     end;

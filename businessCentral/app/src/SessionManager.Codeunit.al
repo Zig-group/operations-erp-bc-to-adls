@@ -295,7 +295,6 @@ codeunit 11007173 "ADLSE Session Manager"
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSEExecute: Codeunit "ADLSE Execute";
         ADLSEUtil: Codeunit "ADLSE Util";
-        AnyStarted: Boolean;
     begin
         if not HasPendingTables() then
             exit;
@@ -307,14 +306,13 @@ codeunit 11007173 "ADLSE Session Manager"
 
         // A failure to start a session only counts towards giving up when no export session of
         // our own occupies the background sessions.
-        AnyStarted := DrainPendingTables(not ADLSECurrentSession.AreAnySessionsActive());
+        DrainPendingTables(not ADLSECurrentSession.AreAnySessionsActive());
         ADLSECurrentSession.ReleaseExport();
         Commit();
         EnsurePendingQueueProcessing();
 
-        // Export sessions that ended while the queue was reserved left the export finished notification to this session.
-        if AnyStarted then
-            exit;
+        // Export sessions that ended while the queue was reserved, including the ones just started, left the
+        // export finished notification to this session. The check covers the sessions still running.
         if LastGivenUpTableID <> 0 then
             if ADLSETable.Get(LastGivenUpTableID) then begin
                 ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, ADLSEUtil.GetTableCaption(LastGivenUpTableID));

@@ -62,11 +62,14 @@ codeunit 11007178 "ADLSE Wrapper Execute"
         ADLSECurrentSession.Stop(ADLSETable."Table ID", false, TableCaption);
         Commit();
 
+        // Also when the error occurred while processing the queue after the run was finalized, as this
+        // may be the last export session and the remaining tables would otherwise be left pending.
+        ADLSESessionManager.EnsurePendingQueueProcessing();
+
         // The run is not in process when the error occurred after the export had already been finalized.
         if not RunFailed then
             exit;
 
-        ADLSESessionManager.EnsurePendingQueueProcessing();
         ADLSEExecute.NotifyExportFinishedIfDone(ADLSETable, TableCaption);
     end;
 }
