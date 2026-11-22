@@ -73,7 +73,7 @@ codeunit 11007173 "ADLSE Session Manager"
             ADLSERun.RegisterQueued(TableID);
             Commit(); // release the lock on the run before the new session picks it up
 
-            SessionTimeout := 1000 * 60 * 60 * 24; // 24 hours
+            SessionTimeout := GetExportSessionTimeout();
 
             Started := Session.StartSession(NewSessionID, Codeunit::"ADLSE Wrapper Execute", CompanyName(), ADLSETable, SessionTimeout);
             CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(TableID));
@@ -443,32 +443,11 @@ codeunit 11007173 "ADLSE Session Manager"
     end;
 
     /// <summary>
-    /// Checks whether an export session was started recently for a table of the current company, but has
-    /// not registered itself yet. Such a session is not yet visible as an active session.
+    /// The timeout of an export session. The platform ends an export session that runs longer.
     /// </summary>
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'r')]
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
-    internal procedure AnyExportSessionStarting(): Boolean
-    var
-        ADLSERun: Record "ADLSE Run";
-        ADLSECurrentSession: Record "ADLSE Current Session";
+    internal procedure GetExportSessionTimeout(): Duration
     begin
-        ADLSERun.SetRange("Company Name", CompanyName());
-        ADLSERun.SetRange(State, "ADLSE Run State"::InProcess);
-        ADLSERun.SetFilter(Started, '>=%1', CurrentDateTime() - GetSessionStartGracePeriod());
-        ADLSERun.SetLoadFields("Table ID");
-        if ADLSERun.FindSet(false) then
-            repeat
-                if not IsTablePending(ADLSERun."Table ID") then
-                    if not ADLSECurrentSession.Get(ADLSERun."Table ID", CompanyName()) then
-                        exit(true);
-            until ADLSERun.Next() = 0;
-        exit(false);
-    end;
-
-    local procedure GetSessionStartGracePeriod(): Duration
-    begin
-        exit(10 * 60 * 1000); // 10 minutes; a session that has not registered itself by then is considered lost
+        exit(1000 * 60 * 60 * 24); // 24 hours
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'r')]

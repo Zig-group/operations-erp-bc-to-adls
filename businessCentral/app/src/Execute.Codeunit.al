@@ -451,8 +451,8 @@ codeunit 11007166 "ADLSE Execute"
     /// waiting in the pending queue, and no run is in process. The latter covers export sessions that were
     /// started but have not registered themselves yet, as their runs are registered as in process up front.
     /// </summary>
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'r')]
     internal procedure NotifyExportFinishedIfDone(var ADLSETable: Record "ADLSE Table"; TableCaption: Text)
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
@@ -462,10 +462,6 @@ codeunit 11007166 "ADLSE Execute"
         ADLSEExecution: Codeunit "ADLSE Execution";
         ADLSEExternalEvents: Codeunit "ADLSE External Events";
     begin
-        // Fails the runs of export sessions that ended abnormally, as these would never finish.
-        ADLSECurrentSession.CleanupStaleSessions();
-        Commit();
-
         if ADLSECurrentSession.AreAnySessionsActive() then
             exit;
         if ADLSESessionManager.HasPendingTables() then

@@ -23,7 +23,6 @@ codeunit 11007167 "ADLSE Execution"
         SuccessfulStopMsg: Label 'The export process was stopped successfully.';
         ClearSchemaExportedOnMsg: Label 'The schema export date has been cleared.';
         ExportAlreadyRunningErr: Label 'An export is already running for this company. Please wait for it to finish before starting a new export.';
-        PreviousExportNotFinishedErr: Label 'The previous export of this table did not finish, so the table is exported again.';
         CouldNotStartExportErr: Label 'The export could not be started for this table. It is exported again with the next export. Error: %1', Comment = '%1 = error text';
 
 
@@ -96,7 +95,6 @@ codeunit 11007167 "ADLSE Execution"
     internal procedure RunExport(var AdlseTable: Record "ADLSE Table"; var FailedToStart: Integer) Started: Integer
     var
         ADLSESetupRec: Record "ADLSE Setup";
-        ADLSERun: Record "ADLSE Run";
         ADLSEField: Record "ADLSE Field";
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSESyncCompanies: Record "ADLSE Sync Companies";
@@ -112,11 +110,6 @@ codeunit 11007167 "ADLSE Execution"
     begin
         ADLSESetup.CheckSetup(ADLSESetupRec);
         EmitTelemetry := ADLSESetupRec."Emit telemetry";
-
-        // No other export session is active or starting, so the runs still in process will never be completed.
-        // Tables waiting in the pending tables queue are kept, as the processing of the queue still starts them.
-        ADLSERun.CancelOrphanedRuns(PreviousExportNotFinishedErr);
-        Commit();
 
         HasSyncCompanyRecord := ADLSESyncCompanies.Get(CompanyName());
         if HasSyncCompanyRecord then begin // Possible Multi Company export Create session So that is can be stopped.
@@ -178,29 +171,33 @@ codeunit 11007167 "ADLSE Execution"
 
     /// <summary>
     /// Reserves the export of the company for the current session. Refuses to start an export while
-    /// another session holds the reservation, or while export sessions of an earlier export are running.
+    /// another session holds the reservation, or while a table of an earlier export is still in process.
+    /// An export is never cancelled because its session is not listed as active, as the active sessions
+    /// do not reliably list all running export sessions. Only runs that exceeded the session timeout are failed.
     /// </summary>
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rid')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'rd')]
     local procedure ReserveExport(ErrorIfRunning: Boolean): Boolean
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
-        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+        ADLSERun: Record "ADLSE Run";
         CustomDimensions: Dictionary of [Text, Text];
         Reserved: Boolean;
         Reason: Text;
     begin
-        ADLSECurrentSession.CleanupStaleSessions();
         Reserved := ADLSECurrentSession.TryReserveExport();
         // Checked after the reservation, so that no other export can start in between.
         if not Reserved then
             Reason := 'The export is reserved by another session.'
-        else
+        else begin
+            ADLSERun.CancelExpiredRuns();
             if ADLSECurrentSession.AreAnySessionsActive() then
                 Reason := 'Export sessions of an earlier export are still active.'
             else
-                if ADLSESessionManager.AnyExportSessionStarting() then
-                    Reason := 'Export sessions of an earlier export are still starting.';
+                if ADLSERun.AnyRunInProcess() then
+                    Reason := 'Tables of an earlier export are still in process.';
+        end;
         if Reason = '' then begin
             Commit(); // makes the reservation visible to other sessions
             exit(true);

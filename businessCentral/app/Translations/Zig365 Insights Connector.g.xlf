@@ -1058,11 +1058,6 @@
           <note from="Developer" annotates="general" priority="2">%1 = number of tables to start the export for. %2 = total number of tables enabled for export.</note>
           <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType ExportStartedTxt</note>
         </trans-unit>
-        <trans-unit id="Codeunit 1271087839 - NamedType 1425048953" size-unit="char" translate="yes" xml:space="preserve">
-          <source>The previous export of this table did not finish, so the table is exported again.</source>
-          <note from="Developer" annotates="general" priority="2"></note>
-          <note from="Xliff Generator" annotates="general" priority="3">Codeunit ADLSE Execution - NamedType PreviousExportNotFinishedErr</note>
-        </trans-unit>
         <trans-unit id="Codeunit 1271087839 - NamedType 2174952215" size-unit="char" translate="yes" xml:space="preserve">
           <source>The export process was stopped successfully.</source>
           <note from="Developer" annotates="general" priority="2"></note>

@@ -85,6 +85,7 @@ table 11007166 "ADLSE Run"
     var
         ExportRunNotFoundErr: Label 'No export process running for table.';
         ExportStoppedDueToCancelledSessionTxt: Label 'Export stopped as session was cancelled. Please check state of the export on the data lake before enabling this.';
+        ExportExceededSessionTimeoutErr: Label 'The export did not finish within the timeout of the export session, so it was stopped. The table is exported again with the next export.';
         CouldNotUpdateExportRunStatusErr: Label 'Could not update the status of the export run for table to %1.', Comment = '%1: New status';
 
     procedure GetLastRunDetails(TableID: Integer; var Status: Enum "ADLSE Run State"; var StartedTime: DateTime; var ErrorIfAny: Text[2048])
@@ -174,16 +175,19 @@ table 11007166 "ADLSE Run"
     end;
 
     /// <summary>
-    /// Fails the in-process runs of the current company, except those of tables waiting in the pending
-    /// tables queue, which are still started by the processing of the queue. To be used only when no
-    /// export session is active or starting for the company, so these runs can never be completed anymore.
+    /// Fails the in-process runs of the current company that started longer ago than the timeout of an export
+    /// session. The platform ends an export session at its timeout, so such a run can never be completed anymore,
+    /// e.g. because its session was ended by a restart. The queue entry and session entry of the table are removed.
     /// </summary>
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rm')]
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'r')]
-    procedure CancelOrphanedRuns(Reason: Text)
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'rd')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
+    procedure CancelExpiredRuns()
     var
         ADLSERun: Record "ADLSE Run";
         ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSECurrentSession: Record "ADLSE Current Session";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
         ADLSEExecution: Codeunit "ADLSE Execution";
         ADLSEUtil: Codeunit "ADLSE Util";
         CustomDimensions: Dictionary of [Text, Text];
@@ -191,22 +195,32 @@ table 11007166 "ADLSE Run"
         Rec.Reset();
         Rec.SetRange("Company Name", CompanyName());
         Rec.SetRange(State, "ADLSE Run State"::InProcess);
+        Rec.SetFilter(Started, '<%1', CurrentDateTime() - ADLSESessionManager.GetExportSessionTimeout() - GetExpiryMargin());
         if Rec.FindSet(false) then
             repeat
-                if not ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), Rec."Table ID") then begin
-                    ADLSERun := Rec;
-                    ADLSERun.Ended := CurrentDateTime();
-                    ADLSERun.Error := CopyStr(Reason, 1, MaxStrLen(ADLSERun.Error));
-                    ADLSERun.State := "ADLSE Run State"::Failed;
-                    ADLSERun.Modify(true);
+                ADLSERun := Rec;
+                ADLSERun.Ended := CurrentDateTime();
+                ADLSERun.Error := ExportExceededSessionTimeoutErr;
+                ADLSERun.State := "ADLSE Run State"::Failed;
+                ADLSERun.Modify(true);
 
-                    Clear(CustomDimensions);
-                    CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(ADLSERun."Table ID"));
-                    CustomDimensions.Add('Table ID', Format(ADLSERun."Table ID"));
-                    CustomDimensions.Add('Run started', Format(ADLSERun.Started, 0, 9));
-                    ADLSEExecution.Log('ADLSE-059', 'Failed an export run that was left in process by an earlier export.', Verbosity::Warning, CustomDimensions);
-                end;
+                if ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), ADLSERun."Table ID") then
+                    ADLSEPendingTable.Delete(false);
+                if ADLSECurrentSession.Get(ADLSERun."Table ID", CompanyName()) then
+                    ADLSECurrentSession.Delete(false);
+
+                Clear(CustomDimensions);
+                CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(ADLSERun."Table ID"));
+                CustomDimensions.Add('Table ID', Format(ADLSERun."Table ID"));
+                CustomDimensions.Add('Run started', Format(ADLSERun.Started, 0, 9));
+                ADLSEExecution.Log('ADLSE-061', 'Failed an export run that did not finish within the session timeout.', Verbosity::Warning, CustomDimensions);
             until Rec.Next() = 0;
+    end;
+
+    local procedure GetExpiryMargin(): Duration
+    begin
+        // The run is registered just before its export session is started.
+        exit(60 * 60 * 1000); // 1 hour
     end;
 
     /// <summary>

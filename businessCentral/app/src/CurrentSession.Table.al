@@ -66,7 +66,6 @@ table 11007160 "ADLSE Current Session"
         CouldNotStopSessionErr: Label 'Could not delete the export table session %1 for table on company %2.', Comment = '%1: session id, %2: company name';
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'id')]
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
     procedure Start(ADLSETableID: Integer)
     var
         ADLSEUtil: Codeunit "ADLSE Util";
@@ -75,11 +74,10 @@ table 11007160 "ADLSE Current Session"
             if IsSessionActive() then
                 Error(InsertFailedErr, ADLSEUtil.GetTableCaption(ADLSETableID));
 
-            // The session that owned this entry ended abnormally (e.g. terminated by the
-            // platform) without cleaning up after itself, leaving this table permanently
-            // stuck. Self-heal by clearing the stale entry and failing the export run it
-            // left hanging, so this export can proceed instead of erroring out forever.
-            LogStaleSessionRemoved(CancelStaleRun(ADLSETableID));
+            // The entry was left by a session that ended without cleaning up after itself, or by a session
+            // that is not listed as active. The export run is not failed: no new export starts while a run is
+            // in process, so this session exports the table of the run.
+            LogStaleSessionRemoved();
             Rec.Delete(false);
         end;
 
@@ -92,25 +90,10 @@ table 11007160 "ADLSE Current Session"
             Error(InsertFailedErr, ADLSEUtil.GetTableCaption(ADLSETableID));
     end;
 
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
-    local procedure CancelStaleRun(ADLSETableID: Integer): Boolean
-    var
-        ADLSERun: Record "ADLSE Run";
-        Status: Enum "ADLSE Run State";
-        StartedTime: DateTime;
-        ErrorIfAny: Text[2048];
-    begin
-        ADLSERun.GetLastRunDetails(ADLSETableID, Status, StartedTime, ErrorIfAny);
-        if Status <> "ADLSE Run State"::InProcess then
-            exit(false);
-        ADLSERun.CancelRun(ADLSETableID);
-        exit(true);
-    end;
-
     /// <summary>
-    /// Logs that the entry of a session that ended abnormally (e.g. crashed, killed or restarted) is removed.
+    /// Logs that the entry of a session that is not listed as active is removed.
     /// </summary>
-    internal procedure LogStaleSessionRemoved(RunCancelled: Boolean)
+    internal procedure LogStaleSessionRemoved()
     var
         ADLSEExecution: Codeunit "ADLSE Execution";
         ADLSEUtil: Codeunit "ADLSE Util";
@@ -123,8 +106,7 @@ table 11007160 "ADLSE Current Session"
         CustomDimensions.Add('Table ID', Format(Rec."Table ID"));
         CustomDimensions.Add('Session ID', Format(Rec."Session ID"));
         CustomDimensions.Add('Session registered at', Format(Rec.SystemCreatedAt, 0, 9));
-        CustomDimensions.Add('Run cancelled', Format(RunCancelled, 0, 9));
-        ADLSEExecution.Log('ADLSE-058', 'Removed the entry of an export session that is no longer active.', Verbosity::Warning, CustomDimensions);
+        ADLSEExecution.Log('ADLSE-058', 'Removed the entry of an export session that is not listed as active.', Verbosity::Warning, CustomDimensions);
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
@@ -182,7 +164,7 @@ table 11007160 "ADLSE Current Session"
             if ADLSECurrentSession.IsSessionActive() then
                 exit(false);
             // the session holding the reservation ended abnormally
-            ADLSECurrentSession.LogStaleSessionRemoved(false);
+            ADLSECurrentSession.LogStaleSessionRemoved();
             ADLSECurrentSession.Delete(false);
         end;
 
@@ -230,27 +212,6 @@ table 11007160 "ADLSE Current Session"
     begin
         Rec.SetRange("Company Name", CopyStr(CompanyName(), 1, 30));
         Rec.DeleteAll(false);
-    end;
-
-    /// <summary>
-    /// Removes the entries of the current company whose session is no longer active and fails the
-    /// export runs these sessions left in process. Entries of active sessions are kept.
-    /// </summary>
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Run", 'rm')]
-    procedure CleanupStaleSessions()
-    var
-        ADLSECurrentSession: Record "ADLSE Current Session";
-    begin
-        Rec.SetRange("Company Name", CopyStr(CompanyName(), 1, 30));
-        if Rec.FindSet(false) then
-            repeat
-                if not IsSessionActive() then begin
-                    LogStaleSessionRemoved(CancelStaleRun(Rec."Table ID"));
-                    ADLSECurrentSession := Rec;
-                    ADLSECurrentSession.Delete(false);
-                end;
-            until Rec.Next() = 0;
     end;
 
     /// <summary>
