@@ -510,21 +510,22 @@ codeunit 85571 "ADLSE Session Manager Tests"
     end;
 
     [Test]
-    procedure TestTryReserveExport_TakesOverStaleReservation()
+    procedure TestTryReserveExport_KeepsRecentReservation()
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
     begin
-        // [SCENARIO] The export reservation of a session that ended abnormally does not block the next export
-        // [GIVEN] An export reservation held by a session that is not active
+        // [SCENARIO] A recent export reservation of another session is kept, even when that session is not listed as active
+        // [GIVEN] A recent export reservation held by a session that is not listed as active
         Initialize();
         ADLSELibrarybc2adls.CleanUp();
         InsertInactiveSession(ADLSECurrentSession.GetExportReservationTableID());
 
         // [WHEN] The export is reserved
-        // [THEN] The reservation is taken over by the current session
-        LibraryAssert.IsTrue(ADLSECurrentSession.TryReserveExport(), 'A stale reservation should be taken over');
+        // [THEN] The reservation is refused and stays with the other session
+        LibraryAssert.IsFalse(ADLSECurrentSession.TryReserveExport(), 'A recent reservation of another session should not be taken over');
         ADLSECurrentSession.Get(ADLSECurrentSession.GetExportReservationTableID(), CompanyName());
-        LibraryAssert.AreEqual(SessionId(), ADLSECurrentSession."Session ID", 'The reservation should belong to the current session');
+        LibraryAssert.AreEqual(2147483000, ADLSECurrentSession."Session ID", 'The reservation should stay with the other session');
+        ADLSECurrentSession.Delete(false);
     end;
 
     [Test]
