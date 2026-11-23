@@ -182,6 +182,7 @@ codeunit 11007167 "ADLSE Execution"
     var
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSERun: Record "ADLSE Run";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
         CustomDimensions: Dictionary of [Text, Text];
         Reserved: Boolean;
         Reason: Text;
@@ -205,6 +206,8 @@ codeunit 11007167 "ADLSE Execution"
 
         if Reserved then
             ADLSECurrentSession.ReleaseExport();
+        // Queued tables keep the export refused, so make sure a task still starts them.
+        ADLSESessionManager.EnsurePendingQueueProcessing();
         Commit();
         CustomDimensions.Add('Reason', Reason);
         if ErrorIfRunning then
