@@ -85,6 +85,7 @@ table 11007166 "ADLSE Run"
     var
         ExportRunNotFoundErr: Label 'No export process running for table.';
         ExportStoppedDueToCancelledSessionTxt: Label 'Export stopped as session was cancelled. Please check state of the export on the data lake before enabling this.';
+        ExportExceededSessionTimeoutErr: Label 'The export did not finish within the timeout of the export session, so it was stopped. The table is exported again with the next export.';
         CouldNotUpdateExportRunStatusErr: Label 'Could not update the status of the export run for table to %1.', Comment = '%1: New status';
 
     procedure GetLastRunDetails(TableID: Integer; var Status: Enum "ADLSE Run State"; var StartedTime: DateTime; var ErrorIfAny: Text[2048])
@@ -107,15 +108,133 @@ table 11007166 "ADLSE Run"
         exit(Round(Ended - Started, 100));
     end;
 
-    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'i')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
     procedure RegisterStarted(TableID: Integer)
     begin
-        Rec.Init();
-        Rec."Table ID" := TableID;
-        Rec."Company Name" := CopyStr(CompanyName(), 1, 30);
+        // Reuse the run registered when the export was queued or started, so that each export has a single run.
+        if FindLastRun(TableID) then
+            if Rec.State = "ADLSE Run State"::InProcess then begin
+                Rec.Started := CurrentDateTime();
+                Rec.Ended := 0DT;
+                Rec.Error := '';
+                Rec.Modify(true);
+                exit;
+            end;
+
+        InitNewRun(TableID);
         Rec.State := "ADLSE Run State"::InProcess;
-        Rec.Started := CurrentDateTime();
         Rec.Insert(true);
+    end;
+
+    /// <summary>
+    /// Registers an export run as in process for a table whose export session is about to be started
+    /// or has been queued. When the last run of the table is already in process, its start time is
+    /// refreshed, so that a session that is starting for it is recognized as such.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
+    procedure RegisterQueued(TableID: Integer)
+    begin
+        if FindLastRun(TableID) then
+            if Rec.State = "ADLSE Run State"::InProcess then begin
+                Rec.Started := CurrentDateTime();
+                Rec.Modify(true);
+                exit;
+            end;
+
+        InitNewRun(TableID);
+        Rec.State := "ADLSE Run State"::InProcess;
+        Rec.Insert(true);
+    end;
+
+    /// <summary>
+    /// Marks the in-process run of a table as failed. When the last run is not in process, a failed run
+    /// is inserted only if InsertIfNotInProcess is set, so the next export is forced for the table.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rim')]
+    procedure RegisterFailed(TableID: Integer; ErrorText: Text; InsertIfNotInProcess: Boolean) Registered: Boolean
+    var
+        ADLSEExternalEvents: Codeunit "ADLSE External Events";
+        InProcess: Boolean;
+    begin
+        if FindLastRun(TableID) then
+            InProcess := Rec.State = "ADLSE Run State"::InProcess;
+
+        if not InProcess then begin
+            if not InsertIfNotInProcess then
+                exit(false);
+            InitNewRun(TableID);
+            Rec.Insert(true);
+        end;
+
+        Rec.State := "ADLSE Run State"::Failed;
+        Rec.Error := CopyStr(ErrorText, 1, MaxStrLen(Rec.Error));
+        Rec.Ended := CurrentDateTime();
+        Rec.Modify(true);
+        ADLSEExternalEvents.OnTableExportRunEnded(Rec.ID, Rec.Started, Rec.Ended, Rec."Table ID", Rec.State);
+        exit(true);
+    end;
+
+    /// <summary>
+    /// Fails the in-process runs of the current company that started longer ago than the timeout of an export
+    /// session. The platform ends an export session at its timeout, so such a run can never be completed anymore,
+    /// e.g. because its session was ended by a restart. The queue entry and session entry of the table are removed.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'rm')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Pending Table", 'rd')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Current Session", 'rd')]
+    procedure CancelExpiredRuns()
+    var
+        ADLSERun: Record "ADLSE Run";
+        ADLSEPendingTable: Record "ADLSE Pending Table";
+        ADLSECurrentSession: Record "ADLSE Current Session";
+        ADLSESessionManager: Codeunit "ADLSE Session Manager";
+        ADLSEExecution: Codeunit "ADLSE Execution";
+        ADLSEUtil: Codeunit "ADLSE Util";
+        CustomDimensions: Dictionary of [Text, Text];
+    begin
+        Rec.Reset();
+        Rec.SetRange("Company Name", CompanyName());
+        Rec.SetRange(State, "ADLSE Run State"::InProcess);
+        Rec.SetFilter(Started, '<%1', CurrentDateTime() - ADLSESessionManager.GetExportSessionTimeout() - GetExpiryMargin());
+        if Rec.FindSet(false) then
+            repeat
+                ADLSERun := Rec;
+                ADLSERun.Ended := CurrentDateTime();
+                ADLSERun.Error := ExportExceededSessionTimeoutErr;
+                ADLSERun.State := "ADLSE Run State"::Failed;
+                ADLSERun.Modify(true);
+
+                if ADLSEPendingTable.Get(CopyStr(CompanyName(), 1, MaxStrLen(ADLSEPendingTable."Company Name")), ADLSERun."Table ID") then
+                    ADLSEPendingTable.Delete(false);
+                if ADLSECurrentSession.Get(ADLSERun."Table ID", CompanyName()) then
+                    ADLSECurrentSession.Delete(false);
+
+                Clear(CustomDimensions);
+                CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(ADLSERun."Table ID"));
+                CustomDimensions.Add('Table ID', Format(ADLSERun."Table ID"));
+                CustomDimensions.Add('Run started', Format(ADLSERun.Started, 0, 9));
+                ADLSEExecution.Log('ADLSE-061', 'Failed an export run that did not finish within the session timeout.', Verbosity::Warning, CustomDimensions);
+            until Rec.Next() = 0;
+    end;
+
+    local procedure GetExpiryMargin(): Duration
+    begin
+        // The run is registered just before its export session is started.
+        exit(60 * 60 * 1000); // 1 hour
+    end;
+
+    /// <summary>
+    /// Checks whether a run of the current company is in process. This also covers tables that are
+    /// queued or whose export session is starting, as these are registered as in process up front.
+    /// </summary>
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'r')]
+    procedure AnyRunInProcess(): Boolean
+    var
+        ADLSERun: Record "ADLSE Run";
+    begin
+        ADLSERun.SetRange("Company Name", CompanyName());
+        ADLSERun.SetRange(State, "ADLSE Run State"::InProcess);
+        exit(not ADLSERun.IsEmpty());
     end;
 
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE run", 'm')]
@@ -239,6 +358,16 @@ table 11007166 "ADLSE Run"
             exit(false);
         end;
         exit(Rec.State = "ADLSE Run State"::InProcess);
+    end;
+
+    local procedure InitNewRun(TableID: Integer)
+    begin
+        Rec.Reset();
+        Rec.Init();
+        Rec.ID := 0; // Init keeps the primary key of the run loaded before, so let AutoIncrement assign a new one
+        Rec."Table ID" := TableID;
+        Rec."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(Rec."Company Name"));
+        Rec.Started := CurrentDateTime();
     end;
 
     local procedure CommmonFilterOnOldRuns()

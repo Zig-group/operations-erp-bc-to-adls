@@ -28,6 +28,7 @@ codeunit 11007175 "ADLSE Upgrade"
     begin
         RetenPolLogEntryAdded();
         ContainerFieldFromIsolatedStorageToSetupField();
+        PendingTablesFromIsolatedStorageRemoved();
     end;
 
     var
@@ -53,6 +54,19 @@ codeunit 11007175 "ADLSE Upgrade"
             exit;
         DoContainerFieldFromIsolatedStorageToSetupField();
         UpgradeTag.SetUpgradeTag(GetContainerFieldFromIsolatedStorageToSetupFieldUpgradeTag());
+    end;
+
+    local procedure PendingTablesFromIsolatedStorageRemoved()
+    var
+        UpgradeTag: Codeunit "Upgrade Tag";
+        PendingTablesKeyTok: Label 'Pending', Locked = true;
+    begin
+        if UpgradeTag.HasUpgradeTag(GetPendingTablesFromIsolatedStorageRemovedUpgradeTag()) then
+            exit;
+        // The pending tables queue moved to the "ADLSE Pending Table" table.
+        if IsolatedStorage.Contains(PendingTablesKeyTok, DataScope::Company) then
+            IsolatedStorage.Delete(PendingTablesKeyTok, DataScope::Company);
+        UpgradeTag.SetUpgradeTag(GetPendingTablesFromIsolatedStorageRemovedUpgradeTag());
     end;
 
     local procedure ConcatenateTableFieldPairs(TableIDFieldNameList: Dictionary of [Integer, List of [Text]]) Result: Text
@@ -97,5 +111,10 @@ codeunit 11007175 "ADLSE Upgrade"
     procedure GetContainerFieldFromIsolatedStorageToSetupFieldUpgradeTag(): Code[250]
     begin
         exit('GITHUB-22-ADLSEContainerFieldFromIsolatedStorageToSetupField-20230906');
+    end;
+
+    procedure GetPendingTablesFromIsolatedStorageRemovedUpgradeTag(): Code[250]
+    begin
+        exit('ZIG-ADLSEPendingTablesFromIsolatedStorageRemoved-20261023');
     end;
 }
