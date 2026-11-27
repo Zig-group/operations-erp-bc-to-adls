@@ -29,6 +29,7 @@ page 11007166 "ADLSE Setup API v12"
                     Editable = false;
                 }
                 field(container; Rec.Container) { }
+                field(accountName; Rec."Account Name") { }
                 field(emitTelemetry; Rec."Emit telemetry") { }
                 field(dataFormat; Rec.DataFormat) { }
                 field(maxPayloadSizeMiB; Rec.MaxPayloadSizeMiB) { }
