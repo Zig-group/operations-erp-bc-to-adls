@@ -117,10 +117,8 @@ codeunit 11007174 "ADLSE Setup"
         ADLSESetup.Workspace := '';
         ADLSESetup.Lakehouse := '';
         ADLSESetup.LandingZone := '';
-        // Container and Account Name are intentionally NOT cleared: for automated tests
-        // these fields should not be cleared when copying a sandbox environment.
-        // ADLSESetup.Container := '';
-        // ADLSESetup."Account Name" := '';
+        ADLSESetup.Container := '';
+        ADLSESetup."Account Name" := '';
         ADLSESetup.Modify(false);
         ADLSECurrentSession.DeleteAll(true);
     end;
